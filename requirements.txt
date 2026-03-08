@@ -1,0 +1,36 @@
+# Web framework
+fastapi>=0.115.0
+uvicorn[standard]>=0.30.0
+python-multipart>=0.0.9
+
+# Database
+sqlalchemy>=2.0.30
+psycopg2-binary>=2.9.9
+alembic>=1.13.0
+
+# Task queue
+celery[redis]>=5.4.0
+redis>=5.0.0
+
+# LLM providers
+anthropic>=0.30.0
+openai>=1.30.0
+
+# Existing agent dependencies
+requests>=2.31.0
+beautifulsoup4>=4.12.0
+lxml>=5.0.0
+urllib3>=2.0.0
+curl_cffi>=0.7.0
+
+# LinkedIn enrichment
+apify-client>=1.7.0
+
+# Export
+openpyxl>=3.1.0
+
+# Config
+pydantic-settings>=2.2.0
+python-dotenv>=1.0.0
+
+

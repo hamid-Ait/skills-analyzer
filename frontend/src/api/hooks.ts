@@ -1,0 +1,98 @@
+import { useState, useEffect, useCallback, useRef } from 'react'
+import api from './client'
+import type { JobDetail, CompanyDetail, PersonList, SkillsMatrix } from './types'
+
+export function usePollingJob(jobId: string | null, intervalMs = 60000) {
+  const [job, setJob] = useState<JobDetail | null>(null)
+  const [loading, setLoading] = useState(false)
+  const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null)
+
+  const fetchJob = useCallback(async () => {
+    if (!jobId) return
+    try {
+      const { data } = await api.get<JobDetail>(`/jobs/${jobId}`)
+      setJob((prev) => {
+        const isTerminal = data.status === 'completed' || data.status === 'error'
+        const allCompaniesTerminal = data.companies.every(
+          (c: any) => c.status === 'completed' || c.status === 'error'
+        )
+        if (isTerminal && allCompaniesTerminal && intervalRef.current) {
+          clearInterval(intervalRef.current)
+          intervalRef.current = null
+        }
+        return data
+      })
+    } catch (err) {
+      console.error('Failed to fetch job:', err)
+    }
+  }, [jobId])
+
+  useEffect(() => {
+    if (!jobId) return
+    setLoading(true)
+    fetchJob().then(() => setLoading(false))
+
+    intervalRef.current = setInterval(fetchJob, intervalMs)
+    return () => {
+      if (intervalRef.current) clearInterval(intervalRef.current)
+    }
+  }, [jobId, fetchJob, intervalMs])
+
+  return { job, loading }
+}
+
+export function useCompany(companyId: string | null) {
+  const [company, setCompany] = useState<CompanyDetail | null>(null)
+  const [loading, setLoading] = useState(false)
+
+  useEffect(() => {
+    if (!companyId) return
+    setLoading(true)
+    api
+      .get<CompanyDetail>(`/companies/${companyId}`)
+      .then(({ data }) => setCompany(data))
+      .catch(console.error)
+      .finally(() => setLoading(false))
+  }, [companyId])
+
+  return { company, loading }
+}
+
+export function usePeople(companyId: string | null, page = 1, pageSize = 50, search = '') {
+  const [data, setData] = useState<PersonList | null>(null)
+  const [loading, setLoading] = useState(false)
+
+  useEffect(() => {
+    if (!companyId) return
+    setLoading(true)
+    const params = new URLSearchParams({
+      page: String(page),
+      page_size: String(pageSize),
+    })
+    if (search) params.set('search', search)
+    api
+      .get<PersonList>(`/companies/${companyId}/people?${params}`)
+      .then(({ data }) => setData(data))
+      .catch(console.error)
+      .finally(() => setLoading(false))
+  }, [companyId, page, pageSize, search])
+
+  return { data, loading }
+}
+
+export function useSkillsMatrix(companyId: string | null) {
+  const [matrix, setMatrix] = useState<SkillsMatrix | null>(null)
+  const [loading, setLoading] = useState(false)
+
+  useEffect(() => {
+    if (!companyId) return
+    setLoading(true)
+    api
+      .get<SkillsMatrix>(`/companies/${companyId}/skills-matrix`)
+      .then(({ data }) => setMatrix(data))
+      .catch(console.error)
+      .finally(() => setLoading(false))
+  }, [companyId])
+
+  return { matrix, loading }
+}
