@@ -97,3 +97,61 @@ export interface UploadResponse {
   total_urls: number
   companies: CompanyBrief[]
 }
+
+// Analytics types
+
+export interface CompanyStat {
+  id: string
+  name: string | null
+  url: string
+  people_count: number
+  analyzed_count: number
+  linkedin_enriched_count: number
+  photo_count: number
+}
+
+export interface AnalyticsOverview {
+  total_companies: number
+  total_people: number
+  total_analyzed: number
+  total_linkedin_enriched: number
+  total_with_photo: number
+  categories: CategoryCount[]
+  top_expertise: ExpertiseCount[]
+  sectors: ExpertiseCount[]
+  geographies: ExpertiseCount[]
+  company_stats: CompanyStat[]
+}
+
+export interface HeatmapCompany {
+  id: string
+  name: string | null
+  categories: Record<string, number>
+}
+
+export interface HeatmapData {
+  companies: HeatmapCompany[]
+  category_names: string[]
+}
+
+export interface GlobalPersonResult {
+  id: string
+  name: string
+  title: string | null
+  location: string | null
+  image_url: string | null
+  linkedin_url: string | null
+  primary_expertise: string | null
+  matched_13_categories: string[] | null
+  sector: string | null
+  geography: string | null
+  company_id: string
+  company_name: string | null
+}
+
+export interface GlobalPersonList {
+  items: GlobalPersonResult[]
+  total: number
+  page: number
+  page_size: number
+}
