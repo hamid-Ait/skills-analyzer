@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { Box, TextField, Chip, Avatar, Link, Pagination } from '@mui/material'
 import { DataGrid, GridColDef } from '@mui/x-data-grid'
 import { usePeople } from '../api/hooks'
+import { proxyImageUrl } from '../api/client'
 import PersonDetailModal from './PersonDetailModal'
 
 const columns: GridColDef[] = [
@@ -12,7 +13,7 @@ const columns: GridColDef[] = [
     minWidth: 180,
     renderCell: (params) => (
       <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-        <Avatar src={params.row.image_url || undefined} imgProps={{ referrerPolicy: 'no-referrer' }} sx={{ width: 32, height: 32 }}>
+        <Avatar src={proxyImageUrl(params.row.image_url)} sx={{ width: 32, height: 32 }}>
           {params.value?.[0]}
         </Avatar>
         {params.value}

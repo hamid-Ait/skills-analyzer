@@ -8,9 +8,11 @@ class Settings(BaseSettings):
     ANTHROPIC_API_KEY: str = ""
     OPENAI_API_KEY: str = ""
     APIFY_API_TOKEN: str = ""
-    LLM_PROVIDER: str = "claude"  # "claude" or "openai"
+    LLM_PROVIDER: str = "gemini"  # "claude", "openai", or "gemini"
     LLM_MODEL_CLAUDE: str = "claude-sonnet-4-20250514"
     LLM_MODEL_OPENAI: str = "gpt-4o-mini"
+    LLM_MODEL_GEMINI: str = "gemini-2.5-flash"
+    GOOGLE_API_KEY: str = ""
     CORS_ORIGINS: str = "http://localhost:5173,http://localhost:3000"
     PROXY_URLS: Optional[str] = None
 

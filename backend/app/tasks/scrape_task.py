@@ -37,7 +37,7 @@ def _update_company(db, company_id: str, **kwargs):
         db.commit()
 
 
-@celery_app.task(bind=True, max_retries=1, time_limit=3600)
+@celery_app.task(bind=True, max_retries=1, time_limit=7200)
 def scrape_company(self, company_id: str, discover: bool = True,
                    follow_profiles: bool = True, enrich_linkedin: bool = False):
     """Celery task: scrape one company URL using the existing agent.py."""
@@ -142,9 +142,13 @@ def scrape_company(self, company_id: str, discover: bool = True,
             search_people_fallback.delay(company_id, enrich_linkedin=enrich_linkedin)
             return
 
-        # Chain expertise analysis
-        from app.tasks.analyze_task import analyze_expertise_batch
-        analyze_expertise_batch.delay(company_id, person_ids, enrich_linkedin=enrich_linkedin)
+        # Chain next step: LinkedIn enrichment first (if requested), then LLM analysis
+        if enrich_linkedin:
+            from app.tasks.resolve_linkedin_task import resolve_linkedin_urls
+            resolve_linkedin_urls.delay(company_id, person_ids)
+        else:
+            from app.tasks.analyze_task import analyze_expertise_batch
+            analyze_expertise_batch.delay(company_id, person_ids)
 
     except Exception as exc:
         log.error(f"Scrape failed for company {company_id}: {exc}", exc_info=True)
@@ -179,8 +183,32 @@ def process_job(self, job_id: str, discover: bool = True,
         job.celery_task_id = self.request.id
         db.commit()
 
+        # Statuses that indicate a company is currently being processed
+        IN_PROGRESS_STATUSES = {"pending", "discovering", "scraping", "searching", "analyzing", "resolving", "enriching"}
+
         companies = db.query(Company).filter(Company.job_id == job_id).all()
         for company in companies:
+            # Skip if another company with the same URL is already in progress
+            already_processing = (
+                db.query(Company)
+                .filter(
+                    Company.url == company.url,
+                    Company.id != company.id,
+                    Company.status.in_(IN_PROGRESS_STATUSES),
+                )
+                .first()
+            )
+            if already_processing:
+                log.info(
+                    f"Skipping company {company.id} ({company.url}) — "
+                    f"already being processed by {already_processing.id}"
+                )
+                _update_company(db, str(company.id), status="completed",
+                                error_message="Skipped: duplicate URL already in progress")
+                job.completed_urls += 1
+                db.commit()
+                continue
+
             scrape_company.delay(
                 str(company.id),
                 discover=discover,

@@ -219,9 +219,20 @@ def simplify_html(html: str, max_chars: int = MAX_HTML_CHARS) -> str:
     from bs4 import BeautifulSoup
     soup = BeautifulSoup(html, "lxml")
 
-    # Remove purely decorative / non-content tags
-    for tag in soup(["script", "style", "noscript", "svg", "img", "video", "audio"]):
+    # Remove purely decorative / non-content tags (keep <img> for photo extraction)
+    for tag in soup(["script", "style", "noscript", "svg", "video", "audio"]):
         tag.decompose()
+
+    # Simplify <img> tags: keep only src attribute to preserve photo URLs
+    for img in soup.find_all("img"):
+        src = img.get("src") or img.get("data-src") or ""
+        if not src or src.startswith("data:"):
+            img.decompose()
+        else:
+            # Strip all attributes except src to save tokens
+            for attr in list(img.attrs.keys()):
+                if attr != "src":
+                    del img[attr]
 
     # Strip <header> — always large mega-navigation with no person data.
     # Pagination is never inside <header> so this is safe.

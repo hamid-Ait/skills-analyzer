@@ -53,7 +53,9 @@ function CompanyCard({ company, onClick }: { company: CompanyBrief; onClick: () 
               <Typography variant="body2">{company.people_count} people</Typography>
             </Box>
             <Typography variant="body2" color="text.secondary">
-              {company.pages_scraped} pages
+              {company.pages_scraped > 0
+                ? `${company.pages_scraped} pages`
+                : 'Source: LinkedIn'}
             </Typography>
           </Box>
 

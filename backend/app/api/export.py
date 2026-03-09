@@ -28,7 +28,7 @@ EXPORT_COLUMNS = [
     ("linkedin_url", "LinkedIn URL"),
     ("linkedin_headline", "LinkedIn Headline"),
     ("primary_expertise", "Primary Expertise"),
-    ("justification", "Justification (LinkedIn + Bio)"),
+    ("justification", "Justification (LinkedIn + Bio/Website)"),
     ("matched_13_categories", "Matched 13 Expertise Categories"),
     ("sector", "Sector"),
     ("geography", "Geography"),
@@ -39,6 +39,9 @@ EXPORT_COLUMNS = [
 ]
 
 EXPORT_HEADERS = [h for _, h in EXPORT_COLUMNS]
+
+# Column widths matching reference layout
+COLUMN_WIDTHS = [18, 24, 22, 38, 40, 40, 28, 65, 48, 40, 35, 65, 70, 60, 22]
 
 
 def _people_to_dicts(people, company_name: str = "") -> list[dict]:
@@ -51,8 +54,8 @@ def _people_to_dicts(people, company_name: str = "") -> list[dict]:
             else:
                 val = getattr(p, field, None)
             if isinstance(val, list):
-                val = "; ".join(val)
-            row[header] = val or ""
+                val = "; ".join(str(v) for v in val if v)
+            row[header] = val if val else "—"
         rows.append(row)
     return rows
 
@@ -86,6 +89,30 @@ def _guess_extension(url: str, content: bytes) -> str:
     if content[:4] == b'RIFF' and content[8:12] == b'WEBP':
         return ".webp"
     return ".jpg"
+
+
+def _style_worksheet(ws):
+    """Apply column widths and header styling to match reference layout."""
+    from openpyxl.styles import Font, Alignment
+    from openpyxl.utils import get_column_letter
+
+    # Column widths
+    for i, width in enumerate(COLUMN_WIDTHS, 1):
+        ws.column_dimensions[get_column_letter(i)].width = width
+
+    # Bold headers
+    for cell in ws[1]:
+        cell.font = Font(bold=True)
+        cell.alignment = Alignment(wrap_text=True)
+
+    # Wrap text for long content columns
+    wrap_cols = {7, 8, 9, 12, 13, 14}  # Justification, Categories, etc.
+    for row in ws.iter_rows(min_row=2):
+        for cell in row:
+            if cell.column in wrap_cols:
+                cell.alignment = Alignment(wrap_text=True, vertical="top")
+            else:
+                cell.alignment = Alignment(vertical="top")
 
 
 @router.get("/export/{company_id}")
@@ -136,6 +163,7 @@ def export_company(
         ws.append(EXPORT_HEADERS)
         for row in rows:
             ws.append([row.get(h, "") for h in EXPORT_HEADERS])
+        _style_worksheet(ws)
 
         output = io.BytesIO()
         wb.save(output)
@@ -159,6 +187,7 @@ def export_company(
         ws.append(EXPORT_HEADERS)
         for row in rows:
             ws.append([row.get(h, "") for h in EXPORT_HEADERS])
+        _style_worksheet(ws)
         xlsx_buf = io.BytesIO()
         wb.save(xlsx_buf)
         xlsx_bytes = xlsx_buf.getvalue()

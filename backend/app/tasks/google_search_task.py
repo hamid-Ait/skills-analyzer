@@ -34,7 +34,7 @@ def search_people_fallback(self, company_id: str, enrich_linkedin: bool = False)
             _finalize_company(db, company_id)
             return
 
-        # Insert people from LinkedIn employees search
+        # Insert people from LinkedIn employees search (includes full profile data)
         person_ids = []
         for p in profiles:
             person = Person(
@@ -43,6 +43,14 @@ def search_people_fallback(self, company_id: str, enrich_linkedin: bool = False)
                 title=p.get("title"),
                 bio=p.get("bio"),
                 linkedin_url=p.get("linkedin_url"),
+                linkedin_headline=p.get("linkedin_headline"),
+                linkedin_summary=p.get("linkedin_summary"),
+                linkedin_experience=p.get("linkedin_experience"),
+                linkedin_education=p.get("linkedin_education"),
+                linkedin_skills=p.get("linkedin_skills"),
+                linkedin_experience_summary=p.get("linkedin_experience_summary"),
+                linkedin_enriched=True,
+                linkedin_enriched_at=datetime.now(timezone.utc),
                 image_url=p.get("image_url"),
                 location=p.get("location"),
                 data_source="LinkedIn (Apify)",
@@ -62,9 +70,9 @@ def search_people_fallback(self, company_id: str, enrich_linkedin: bool = False)
         db.commit()
         log.info(f"Inserted {len(person_ids)} people from LinkedIn for company {company_id}")
 
-        # Skip LinkedIn enrichment — data already comes from LinkedIn
+        # Data already rich from company employees actor — go to LLM analysis
         from app.tasks.analyze_task import analyze_expertise_batch
-        analyze_expertise_batch.delay(company_id, person_ids, enrich_linkedin=False)
+        analyze_expertise_batch.delay(company_id, person_ids)
 
     except Exception as exc:
         log.error(f"LinkedIn employees fallback failed for company {company_id}: {exc}", exc_info=True)

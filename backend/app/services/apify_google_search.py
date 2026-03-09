@@ -58,7 +58,7 @@ class ApifyLinkedInEmployeesClient:
         return None
 
     def search_company_people(self, company_name: str, company_url: str,
-                              max_results: int = 100) -> list[dict]:
+                              max_results: int = 10000) -> list[dict]:
         """
         Fetch employees of a company from LinkedIn via Apify.
         First resolves the company website to a LinkedIn company URL,
@@ -125,22 +125,67 @@ class ApifyLinkedInEmployeesClient:
             image_url = pic_data.get("url")
         elif isinstance(pic_data, str):
             image_url = pic_data
+        if not image_url:
+            image_url = item.get("photo")
 
         # Extract current title from headline or currentPosition
         title = None
         if headline:
-            # headline is usually "Title at Company" — extract the title part
             parts = headline.split(" at ")
             title = parts[0].strip() if parts else headline
         positions = item.get("currentPosition") or []
         if positions and not title:
             title = positions[0].get("title")
 
+        # Extract full experience list
+        experience = item.get("experience") or []
+
+        # Extract education
+        education = item.get("education") or []
+
+        # Extract skills from experience entries + topSkills
+        skills = []
+        top_skills = item.get("topSkills")
+        if isinstance(top_skills, str) and top_skills:
+            skills.extend([s.strip() for s in top_skills.split("•") if s.strip()])
+        # Collect unique skills from experience entries
+        seen_skills = set(s.lower() for s in skills)
+        for exp in experience:
+            for skill in (exp.get("skills") or []):
+                if skill.lower() not in seen_skills:
+                    skills.append(skill)
+                    seen_skills.add(skill.lower())
+
+        # Build experience summary (first 5 entries)
+        experience_summary = _build_experience_summary_from_employees(experience)
+
         return {
             "name": name,
             "title": title,
             "linkedin_url": linkedin_url,
+            "linkedin_headline": headline,
+            "linkedin_summary": item.get("about"),
+            "linkedin_experience": experience,
+            "linkedin_education": education,
+            "linkedin_skills": skills if skills else None,
+            "linkedin_experience_summary": experience_summary,
             "location": location,
             "image_url": image_url,
             "bio": item.get("about") or headline,
         }
+
+
+def _build_experience_summary_from_employees(experience: list[dict]) -> str:
+    """Build a text summary from linkedin-company-employees experience entries."""
+    if not experience:
+        return "—"
+    lines = []
+    for exp in experience[:5]:
+        position = exp.get("position") or ""
+        company = exp.get("companyName") or ""
+        duration = exp.get("duration") or ""
+        location = exp.get("location") or ""
+        parts = [p for p in [position, company, duration, location] if p]
+        if parts:
+            lines.append("\n".join(parts))
+    return "\n".join(lines) if lines else "—"

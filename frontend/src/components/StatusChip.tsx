@@ -6,6 +6,7 @@ const STATUS_COLORS: Record<string, 'default' | 'primary' | 'secondary' | 'error
   scraping: 'warning',
   searching: 'info',
   analyzing: 'secondary',
+  resolving: 'info',
   enriching: 'secondary',
   processing: 'warning',
   completed: 'success',

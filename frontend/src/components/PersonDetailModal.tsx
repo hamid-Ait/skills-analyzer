@@ -4,7 +4,7 @@ import {
   Avatar, Chip, Divider, Link, CircularProgress, Grid,
 } from '@mui/material'
 import { Close, Email, Phone, LinkedIn, Language } from '@mui/icons-material'
-import api from '../api/client'
+import api, { proxyImageUrl } from '../api/client'
 import type { PersonDetail } from '../api/types'
 
 interface Props {
@@ -52,8 +52,7 @@ export default function PersonDetailModal({ personId, onClose }: Props) {
             {/* Header */}
             <Box sx={{ display: 'flex', gap: 2, mb: 3 }}>
               <Avatar
-                src={person.image_url || undefined}
-                imgProps={{ referrerPolicy: 'no-referrer' }}
+                src={proxyImageUrl(person.image_url)}
                 sx={{ width: 64, height: 64, fontSize: '1.5rem' }}
               >
                 {person.name?.[0]}

@@ -23,4 +23,5 @@ celery_app.conf.include = [
     "app.tasks.analyze_task",
     "app.tasks.linkedin_task",
     "app.tasks.google_search_task",
+    "app.tasks.resolve_linkedin_task",
 ]

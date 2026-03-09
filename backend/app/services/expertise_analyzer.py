@@ -8,23 +8,23 @@ from app.config import settings
 log = logging.getLogger(__name__)
 
 EXPERTISE_CATEGORIES = [
-    "Strategy & Transformation",
-    "Operations & Performance Improvement",
-    "Technology & Digital",
-    "Finance & Restructuring",
-    "Human Capital & Organizational Design",
-    "Marketing & Commercial Excellence",
-    "Legal & Regulatory",
-    "Risk & Compliance",
-    "Mergers & Acquisitions",
-    "Supply Chain & Procurement",
-    "Data & Analytics",
-    "Industry Specialists",
-    "Sustainability & ESG",
+    "Revenue Growth",
+    "Operational Improvements",
+    "Finance and Accounting",
+    "Marketing",
+    "People and Talent",
+    "Technology",
+    "M&A and Corporate Development",
+    "Real Estate & Assets",
+    "R&D",
+    "Environment (ESG)",
+    "Governance (ESG)",
+    "Social (ESG)",
+    "Legal",
 ]
 
 EXPERTISE_SYSTEM_PROMPT = f"""You are an expert at categorizing professional expertise.
-Given information about people (name, title, bio, department, location), classify each person into:
+Given information about people (name, title, bio, department, location, and optionally LinkedIn headline, summary, experience, and skills), classify each person into:
 
 1. primary_expertise: A concise label for their main area of expertise (e.g., "Restructuring Advisory", "Digital Transformation", "Tax Consulting")
 
@@ -35,7 +35,7 @@ Given information about people (name, title, bio, department, location), classif
 
 4. sector: The industry sector they specialize in (e.g., "Financial Services", "Healthcare", "Energy", "Technology", "Consumer & Retail", "Public Sector", "General")
 
-5. geography: Their geographic focus based on location and bio context (e.g., "North America", "Europe", "Middle East", "Asia Pacific", "Global")
+5. geography: The geographic region(s) where the person has applied their expertise, based on their work experience, clients, and projects — NOT simply where they are located (e.g., "North America", "Europe", "Middle East", "Asia Pacific", "Global", "Latin America", "Africa")
 
 6. inferred_expertise_functional: Their functional expertise area (e.g., "Advisory", "Implementation", "Analytics", "Leadership", "Consulting")
 
@@ -61,7 +61,7 @@ class ClaudeProvider(BaseLLMProvider):
     def analyze_batch(self, people_text: str) -> str:
         resp = self.client.messages.create(
             model=self.model,
-            max_tokens=8192,
+            max_tokens=16384,
             system=EXPERTISE_SYSTEM_PROMPT,
             messages=[{"role": "user", "content": people_text}],
         )
@@ -81,15 +81,35 @@ class OpenAIProvider(BaseLLMProvider):
                 {"role": "system", "content": EXPERTISE_SYSTEM_PROMPT},
                 {"role": "user", "content": people_text},
             ],
-            max_tokens=8192,
+            max_tokens=16384,
             temperature=0.1,
         )
         return resp.choices[0].message.content
 
 
+class GeminiProvider(BaseLLMProvider):
+    def __init__(self):
+        from google import genai
+        self.client = genai.Client(api_key=settings.GOOGLE_API_KEY)
+        self.model = settings.LLM_MODEL_GEMINI
+
+    def analyze_batch(self, people_text: str) -> str:
+        resp = self.client.models.generate_content(
+            model=self.model,
+            contents=f"{EXPERTISE_SYSTEM_PROMPT}\n\n{people_text}",
+            config={
+                "temperature": 0.1,
+                "max_output_tokens": 16384,
+            },
+        )
+        return resp.text
+
+
 def get_provider() -> BaseLLMProvider:
     if settings.LLM_PROVIDER == "openai":
         return OpenAIProvider()
+    if settings.LLM_PROVIDER == "gemini":
+        return GeminiProvider()
     return ClaudeProvider()
 
 
@@ -104,11 +124,23 @@ def format_people_for_analysis(people: list[dict]) -> str:
         bio = p.get("bio", "")
         if bio:
             lines.append(f"  Bio: {bio[:500]}")
+        # LinkedIn-enriched fields for richer analysis
+        if p.get("linkedin_headline"):
+            lines.append(f"  LinkedIn Headline: {p['linkedin_headline']}")
+        if p.get("linkedin_summary"):
+            lines.append(f"  LinkedIn Summary: {p['linkedin_summary'][:500]}")
+        if p.get("linkedin_experience_summary"):
+            lines.append(f"  LinkedIn Experience: {p['linkedin_experience_summary'][:500]}")
+        if p.get("linkedin_skills"):
+            skills = p["linkedin_skills"]
+            if isinstance(skills, list):
+                skills = ", ".join(str(s) for s in skills[:20])
+            lines.append(f"  Skills: {skills}")
         lines.append("")
     return "\n".join(lines)
 
 
-def analyze_people(people_data: list[dict], batch_size: int = 15) -> list[dict]:
+def analyze_people(people_data: list[dict], batch_size: int = 10) -> list[dict]:
     """Analyze a batch of people and return expertise classifications."""
     provider = get_provider()
     all_results = []

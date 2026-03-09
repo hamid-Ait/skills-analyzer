@@ -52,7 +52,9 @@ export default function CompanyDetailPage() {
             {company.team_url && ` | Team: ${company.team_url}`}
           </Typography>
           <Typography variant="body2" color="text.secondary">
-            {company.people_count} people | {company.pages_scraped} pages scraped
+            {company.people_count} people |   {company.pages_scraped > 0
+                ? `${company.pages_scraped} pages`
+                : 'Source: LinkedIn'}
             {company.waf_detected && ` | WAF: ${company.waf_name}`}
           </Typography>
         </Box>

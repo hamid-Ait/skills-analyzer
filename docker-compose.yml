@@ -59,7 +59,8 @@ services:
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       APIFY_API_TOKEN: ${APIFY_API_TOKEN:-}
-      LLM_PROVIDER: ${LLM_PROVIDER:-claude}
+      LLM_PROVIDER: ${LLM_PROVIDER:-gemini}
+      GOOGLE_API_KEY: ${GOOGLE_API_KEY:-}
       PROXY_URLS: ${PROXY_URLS:-}
     volumes:
       - ./backend:/app
@@ -80,8 +81,10 @@ services:
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       APIFY_API_TOKEN: ${APIFY_API_TOKEN:-}
-      LLM_PROVIDER: ${LLM_PROVIDER:-claude}
+      LLM_PROVIDER: ${LLM_PROVIDER:-gemini}
+      GOOGLE_API_KEY: ${GOOGLE_API_KEY:-}
       PROXY_URLS: ${PROXY_URLS:-}
+      SCRAPEDO_API_KEY: ${SCRAPEDO_API_KEY:-}
     volumes:
       - ./backend:/app
     depends_on:
