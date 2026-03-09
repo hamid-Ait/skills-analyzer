@@ -3,7 +3,7 @@ import { useNavigate, useLocation } from 'react-router-dom'
 import {
   AppBar, Toolbar, Typography, Box, IconButton, Button, Container,
 } from '@mui/material'
-import { CloudUpload, Dashboard, Groups } from '@mui/icons-material'
+import { CloudUpload, Dashboard, Groups, Analytics, Search } from '@mui/icons-material'
 
 export default function Layout({ children }: { children: ReactNode }) {
   const navigate = useNavigate()
@@ -34,6 +34,22 @@ export default function Layout({ children }: { children: ReactNode }) {
             sx={{ fontWeight: location.pathname.startsWith('/dashboard') ? 700 : 400 }}
           >
             Dashboard
+          </Button>
+          <Button
+            color="inherit"
+            startIcon={<Analytics />}
+            onClick={() => navigate('/analytics')}
+            sx={{ fontWeight: location.pathname === '/analytics' ? 700 : 400 }}
+          >
+            Analytics
+          </Button>
+          <Button
+            color="inherit"
+            startIcon={<Search />}
+            onClick={() => navigate('/search')}
+            sx={{ fontWeight: location.pathname === '/search' ? 700 : 400 }}
+          >
+            Search
           </Button>
         </Toolbar>
       </AppBar>

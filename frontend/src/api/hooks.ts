@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import api from './client'
-import type { JobDetail, CompanyDetail, PersonList, SkillsMatrix } from './types'
+import type { JobDetail, CompanyDetail, PersonList, SkillsMatrix, AnalyticsOverview, HeatmapData, GlobalPersonList } from './types'
 
 export function usePollingJob(jobId: string | null, intervalMs = 60000) {
   const [job, setJob] = useState<JobDetail | null>(null)
@@ -95,4 +95,65 @@ export function useSkillsMatrix(companyId: string | null) {
   }, [companyId])
 
   return { matrix, loading }
+}
+
+export function useAnalyticsOverview() {
+  const [data, setData] = useState<AnalyticsOverview | null>(null)
+  const [loading, setLoading] = useState(false)
+
+  useEffect(() => {
+    setLoading(true)
+    api
+      .get<AnalyticsOverview>('/analytics/overview')
+      .then(({ data }) => setData(data))
+      .catch(console.error)
+      .finally(() => setLoading(false))
+  }, [])
+
+  return { data, loading }
+}
+
+export function useHeatmap() {
+  const [data, setData] = useState<HeatmapData | null>(null)
+  const [loading, setLoading] = useState(false)
+
+  useEffect(() => {
+    setLoading(true)
+    api
+      .get<HeatmapData>('/analytics/heatmap')
+      .then(({ data }) => setData(data))
+      .catch(console.error)
+      .finally(() => setLoading(false))
+  }, [])
+
+  return { data, loading }
+}
+
+export function useGlobalSearch(
+  q: string,
+  category: string,
+  sector: string,
+  geography: string,
+  page: number,
+  pageSize: number,
+) {
+  const [data, setData] = useState<GlobalPersonList | null>(null)
+  const [loading, setLoading] = useState(false)
+
+  useEffect(() => {
+    setLoading(true)
+    const params: Record<string, string | number> = { page, page_size: pageSize }
+    if (q) params.q = q
+    if (category) params.category = category
+    if (sector) params.sector = sector
+    if (geography) params.geography = geography
+
+    api
+      .get<GlobalPersonList>('/analytics/search', { params })
+      .then(({ data }) => setData(data))
+      .catch(console.error)
+      .finally(() => setLoading(false))
+  }, [q, category, sector, geography, page, pageSize])
+
+  return { data, loading }
 }
