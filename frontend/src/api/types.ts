@@ -9,6 +9,10 @@ export interface CompanyBrief {
   pages_scraped: number
   created_at: string
   updated_at: string
+  top_categories: string[]
+  analyzed_pct: number
+  linkedin_pct: number
+  photo_pct: number
 }
 
 export interface CompanyDetail extends CompanyBrief {

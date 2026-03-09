@@ -2,10 +2,11 @@ import { useState, useEffect, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import {
   Box, Typography, Grid, Card, CardContent, CardActionArea,
-  Alert, CircularProgress, Pagination, LinearProgress,
+  Alert, CircularProgress, Pagination, LinearProgress, Chip, Tooltip,
 } from '@mui/material'
 import { People, Language } from '@mui/icons-material'
 import StatusChip from '../components/StatusChip'
+import PipelineProgress from '../components/PipelineProgress'
 import api from '../api/client'
 import type { CompanyBrief } from '../api/types'
 
@@ -14,6 +15,28 @@ interface CompanyList {
   total: number
   page: number
   page_size: number
+}
+
+/** Mini donut chart rendered as SVG */
+function MiniDonut({ value, color, size = 36 }: { value: number; color: string; size?: number }) {
+  const r = (size - 4) / 2
+  const circumference = 2 * Math.PI * r
+  const filled = (value / 100) * circumference
+
+  return (
+    <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`}>
+      <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke="#e0e0e0" strokeWidth={3} />
+      <circle
+        cx={size / 2} cy={size / 2} r={r} fill="none" stroke={color} strokeWidth={3}
+        strokeDasharray={`${filled} ${circumference}`}
+        strokeLinecap="round"
+        transform={`rotate(-90 ${size / 2} ${size / 2})`}
+      />
+      <text x={size / 2} y={size / 2} textAnchor="middle" dominantBaseline="central" fontSize={9} fontWeight={600} fill="#555">
+        {value}%
+      </text>
+    </svg>
+  )
 }
 
 function CompanyCard({ company, onClick }: { company: CompanyBrief; onClick: () => void }) {
@@ -41,13 +64,7 @@ function CompanyCard({ company, onClick }: { company: CompanyBrief; onClick: () 
             </Typography>
           </Box>
 
-          {company.team_url && (
-            <Typography variant="caption" color="text.secondary" display="block" mb={1}>
-              Team page: {company.team_url}
-            </Typography>
-          )}
-
-          <Box sx={{ display: 'flex', gap: 2, mt: 1 }}>
+          <Box sx={{ display: 'flex', gap: 2, alignItems: 'center', mb: 1 }}>
             <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
               <People fontSize="small" color="primary" />
               <Typography variant="body2">{company.people_count} people</Typography>
@@ -58,6 +75,51 @@ function CompanyCard({ company, onClick }: { company: CompanyBrief; onClick: () 
                 : 'Source: LinkedIn'}
             </Typography>
           </Box>
+
+          {/* Top 3 expertise categories */}
+          {company.top_categories && company.top_categories.length > 0 && (
+            <Box sx={{ display: 'flex', gap: 0.5, flexWrap: 'wrap', mb: 1.5 }}>
+              {company.top_categories.map((cat) => (
+                <Chip
+                  key={cat}
+                  label={cat}
+                  size="small"
+                  variant="outlined"
+                  sx={{ fontSize: '0.65rem', height: 20 }}
+                />
+              ))}
+            </Box>
+          )}
+
+          {/* Data completeness mini donuts */}
+          {company.people_count > 0 && (
+            <Box sx={{ display: 'flex', justifyContent: 'space-around', mt: 1 }}>
+              <Tooltip title="Expertise analyzed">
+                <Box sx={{ textAlign: 'center' }}>
+                  <MiniDonut value={company.analyzed_pct} color="#4caf50" />
+                  <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.6rem' }}>
+                    Analyzed
+                  </Typography>
+                </Box>
+              </Tooltip>
+              <Tooltip title="LinkedIn enriched">
+                <Box sx={{ textAlign: 'center' }}>
+                  <MiniDonut value={company.linkedin_pct} color="#0077b5" />
+                  <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.6rem' }}>
+                    LinkedIn
+                  </Typography>
+                </Box>
+              </Tooltip>
+              <Tooltip title="With photo">
+                <Box sx={{ textAlign: 'center' }}>
+                  <MiniDonut value={company.photo_pct} color="#ff9800" />
+                  <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.6rem' }}>
+                    Photos
+                  </Typography>
+                </Box>
+              </Tooltip>
+            </Box>
+          )}
 
           {company.error_message && (
             <Alert severity="error" sx={{ mt: 1, py: 0, fontSize: '0.75rem' }}>
@@ -96,11 +158,9 @@ export default function DashboardPage() {
         .get<CompanyList>('/companies', { params: { active: true, page_size: 100 } })
         .then(({ data }) => {
           setActiveCompanies(data.items)
-          // If no active companies, stop polling and refresh completed list
           if (data.items.length === 0 && intervalRef.current) {
             clearInterval(intervalRef.current)
             intervalRef.current = null
-            // Refresh completed companies
             api
               .get<CompanyList>('/companies', { params: { status: 'completed', page, page_size: pageSize } })
               .then(({ data }) => setCompanies(data))
@@ -159,23 +219,22 @@ export default function DashboardPage() {
             {activeCompanies.map((company) => (
               <Grid item xs={12} sm={6} md={4} key={company.id}>
                 <Card sx={{ height: '100%', border: '1px solid', borderColor: 'warning.light' }}>
-                  <LinearProgress
-                    color="warning"
-                    sx={{ height: 3 }}
-                  />
+                  <LinearProgress color="warning" sx={{ height: 3 }} />
                   <CardContent>
                     <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 1 }}>
-                      <Typography variant="h6" noWrap sx={{ maxWidth: '70%' }}>
+                      <Typography variant="h6" noWrap sx={{ maxWidth: '60%' }}>
                         {company.name || 'Unknown'}
                       </Typography>
                       <StatusChip status={company.status} />
                     </Box>
-                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, mb: 1 }}>
                       <Language fontSize="small" color="action" />
                       <Typography variant="body2" color="text.secondary" noWrap>
                         {company.url}
                       </Typography>
                     </Box>
+                    {/* Pipeline step indicator */}
+                    <PipelineProgress status={company.status} />
                   </CardContent>
                 </Card>
               </Grid>

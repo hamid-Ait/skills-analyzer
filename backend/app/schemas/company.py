@@ -15,6 +15,11 @@ class CompanyBrief(BaseModel):
     pages_scraped: int = 0
     created_at: datetime
     updated_at: datetime
+    # Enrichment stats (populated for completed companies)
+    top_categories: list[str] = []
+    analyzed_pct: int = 0
+    linkedin_pct: int = 0
+    photo_pct: int = 0
 
     model_config = {"from_attributes": True}
 
