@@ -27,7 +27,8 @@ class ApifyLinkedInClient:
 
         try:
             run_input = {
-                "profileUrls": linkedin_urls,
+                "profileScraperMode": "Profile details no email ($4 per 1k)",
+                "queries": linkedin_urls,
             }
             run = self.client.actor(self.ACTOR_ID).call(run_input=run_input)
             dataset = self.client.dataset(run["defaultDatasetId"])

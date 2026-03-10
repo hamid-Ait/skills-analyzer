@@ -3,9 +3,8 @@ from datetime import datetime, timezone
 
 from app.tasks.celery_app import celery_app
 from app.database import SessionLocal
-from app.models import Person
+from app.models import Company, Person
 from app.services.apify_linkedin import ApifyLinkedInClient
-from app.tasks.analyze_task import _finalize_company, _update_company_error
 
 log = logging.getLogger(__name__)
 
@@ -26,7 +25,7 @@ def _build_experience_summary(experience: list[dict]) -> str:
     return "\n".join(lines) if lines else "—"
 
 
-@celery_app.task(bind=True, max_retries=1, time_limit=3600)
+@celery_app.task(bind=True, max_retries=1, time_limit=14400, soft_time_limit=13800)
 def enrich_linkedin_batch(self, company_id: str, person_ids: list[str],
                           all_person_ids: list[str] | None = None):
     """Enrich people records with LinkedIn data via Apify.
@@ -57,6 +56,15 @@ def enrich_linkedin_batch(self, company_id: str, person_ids: list[str],
             analyze_expertise_batch.delay(company_id, chain_ids)
             return
 
+        log.info(f"Enriching {len(urls)} LinkedIn profiles for company {company_id}")
+
+        # Update company status
+        company = db.query(Company).filter(Company.id == company_id).first()
+        if company:
+            company.status = "enriching"
+            company.updated_at = datetime.now(timezone.utc)
+            db.commit()
+
         # Call Apify in batches of 50
         client = ApifyLinkedInClient()
         batch_size = 50
@@ -64,7 +72,15 @@ def enrich_linkedin_batch(self, company_id: str, person_ids: list[str],
 
         for i in range(0, len(urls), batch_size):
             batch_urls = urls[i:i + batch_size]
-            profiles = client.enrich_profiles(batch_urls)
+            batch_num = i // batch_size + 1
+            total_batches = (len(urls) + batch_size - 1) // batch_size
+            log.info(f"  Enrichment batch {batch_num}/{total_batches} ({len(batch_urls)} profiles)")
+
+            try:
+                profiles = client.enrich_profiles(batch_urls)
+            except Exception as exc:
+                log.warning(f"  Batch {batch_num} failed: {exc} — continuing with next batch")
+                continue
 
             for profile in profiles:
                 profile_url = profile.get("linkedinUrl") or profile.get("url") or ""
@@ -101,6 +117,7 @@ def enrich_linkedin_batch(self, company_id: str, person_ids: list[str],
                 enriched += 1
 
             db.commit()
+            log.info(f"  Batch {batch_num} done — {enriched} enriched so far")
 
         log.info(f"LinkedIn enriched {enriched}/{len(urls)} profiles for company {company_id}")
 
@@ -110,7 +127,8 @@ def enrich_linkedin_batch(self, company_id: str, person_ids: list[str],
 
     except Exception as exc:
         log.error(f"LinkedIn enrichment failed for company {company_id}: {exc}", exc_info=True)
-        _update_company_error(db, company_id, f"LinkedIn enrichment: {exc}")
-        raise
+        # Still chain to analysis with whatever we have — partial enrichment is better than none
+        from app.tasks.analyze_task import analyze_expertise_batch
+        analyze_expertise_batch.delay(company_id, chain_ids)
     finally:
         db.close()

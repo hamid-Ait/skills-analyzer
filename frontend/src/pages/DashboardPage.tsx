@@ -2,12 +2,13 @@ import { useState, useEffect, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import {
   Box, Typography, Grid, Card, CardContent, CardActionArea,
-  Alert, CircularProgress, Pagination, LinearProgress, Chip, Tooltip,
+  Alert, CircularProgress, Pagination, LinearProgress, Chip, Tooltip, Paper,
 } from '@mui/material'
-import { People, Language } from '@mui/icons-material'
+import { People, Language, Business, Analytics, LinkedIn } from '@mui/icons-material'
 import StatusChip from '../components/StatusChip'
 import PipelineProgress from '../components/PipelineProgress'
 import api from '../api/client'
+import { useAnalyticsOverview } from '../api/hooks'
 import type { CompanyBrief } from '../api/types'
 
 interface CompanyList {
@@ -140,6 +141,7 @@ export default function DashboardPage() {
   const [page, setPage] = useState(1)
   const pageSize = 24
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  const { data: overview } = useAnalyticsOverview()
 
   // Fetch completed companies
   useEffect(() => {
@@ -205,6 +207,35 @@ export default function DashboardPage() {
       <Box sx={{ mb: 3 }}>
         <Typography variant="h4" fontWeight={600}>Dashboard</Typography>
       </Box>
+
+      {/* Summary Bar */}
+      {overview && (
+        <Paper
+          elevation={0}
+          sx={{
+            display: 'flex',
+            gap: 3,
+            p: 2,
+            mb: 3,
+            bgcolor: 'grey.50',
+            borderRadius: 2,
+            flexWrap: 'wrap',
+          }}
+        >
+          {[
+            { icon: <Business fontSize="small" color="primary" />, label: 'Companies', value: overview.total_companies },
+            { icon: <People fontSize="small" color="primary" />, label: 'People', value: overview.total_people.toLocaleString() },
+            { icon: <Analytics fontSize="small" color="success" />, label: 'Analyzed', value: overview.total_people > 0 ? `${Math.round(overview.total_analyzed / overview.total_people * 100)}%` : '0%' },
+            { icon: <LinkedIn fontSize="small" sx={{ color: '#0077b5' }} />, label: 'LinkedIn', value: overview.total_people > 0 ? `${Math.round(overview.total_linkedin_enriched / overview.total_people * 100)}%` : '0%' },
+          ].map((stat) => (
+            <Box key={stat.label} sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+              {stat.icon}
+              <Typography variant="body2" color="text.secondary">{stat.label}:</Typography>
+              <Typography variant="body1" fontWeight={600}>{stat.value}</Typography>
+            </Box>
+          ))}
+        </Paper>
+      )}
 
       {/* Active / In-Progress Section */}
       {hasActive && (
