@@ -3,8 +3,10 @@ import { useParams, useNavigate } from 'react-router-dom'
 import {
   Box, Typography, Tabs, Tab, Button, CircularProgress, Breadcrumbs, Link,
   ToggleButtonGroup, ToggleButton, TextField, Pagination,
+  Menu, MenuItem, ListItemIcon, ListItemText, Snackbar, Alert,
 } from '@mui/material'
-import { ArrowBack, ViewList, ViewModule } from '@mui/icons-material'
+import { ArrowBack, ViewList, ViewModule, Refresh, RestartAlt, Psychology, LinkedIn, AutoFixHigh } from '@mui/icons-material'
+import api from '../api/client'
 import StatusChip from '../components/StatusChip'
 import ExportButton from '../components/ExportButton'
 import PeopleTable from '../components/PeopleTable'
@@ -67,6 +69,22 @@ export default function CompanyDetailPage() {
   const [viewMode, setViewMode] = useState<'table' | 'cards'>('table')
 
   const { company, loading } = useCompany(companyId || null)
+  const [retryAnchor, setRetryAnchor] = useState<null | HTMLElement>(null)
+  const [retryLoading, setRetryLoading] = useState(false)
+  const [snack, setSnack] = useState<{ msg: string; severity: 'success' | 'error' } | null>(null)
+
+  const handleRetry = async (mode: string) => {
+    setRetryAnchor(null)
+    setRetryLoading(true)
+    try {
+      const { data } = await api.post(`/companies/${companyId}/retry`, { mode })
+      setSnack({ msg: data.message, severity: 'success' })
+    } catch (err: any) {
+      setSnack({ msg: err.response?.data?.detail || 'Retry failed', severity: 'error' })
+    } finally {
+      setRetryLoading(false)
+    }
+  }
 
   if (loading || !company) {
     return (
@@ -117,6 +135,33 @@ export default function CompanyDetailPage() {
           >
             Back
           </Button>
+          <Button
+            variant="outlined"
+            color="warning"
+            startIcon={retryLoading ? <CircularProgress size={16} /> : <Refresh />}
+            onClick={(e) => setRetryAnchor(e.currentTarget)}
+            disabled={retryLoading}
+          >
+            Retry
+          </Button>
+          <Menu anchorEl={retryAnchor} open={Boolean(retryAnchor)} onClose={() => setRetryAnchor(null)}>
+            <MenuItem onClick={() => handleRetry('rescrape')}>
+              <ListItemIcon><RestartAlt fontSize="small" /></ListItemIcon>
+              <ListItemText primary="Re-scrape" secondary="Delete people & start fresh" />
+            </MenuItem>
+            <MenuItem onClick={() => handleRetry('analyze_missing')}>
+              <ListItemIcon><AutoFixHigh fontSize="small" /></ListItemIcon>
+              <ListItemText primary="Analyze missing" secondary="Only unanalyzed profiles" />
+            </MenuItem>
+            <MenuItem onClick={() => handleRetry('reanalyze')}>
+              <ListItemIcon><Psychology fontSize="small" /></ListItemIcon>
+              <ListItemText primary="Re-analyze all" secondary="Clear & redo all expertise analysis" />
+            </MenuItem>
+            <MenuItem onClick={() => handleRetry('reenrich')}>
+              <ListItemIcon><LinkedIn fontSize="small" /></ListItemIcon>
+              <ListItemText primary="Re-enrich" secondary="Re-run LinkedIn + analysis" />
+            </MenuItem>
+          </Menu>
           <ExportButton companyId={companyId!} />
         </Box>
       </Box>
@@ -147,6 +192,17 @@ export default function CompanyDetailPage() {
       {tab === 0 && viewMode === 'table' && <PeopleTable companyId={companyId!} />}
       {tab === 0 && viewMode === 'cards' && <PeopleCardView companyId={companyId!} />}
       {tab === 1 && <SkillsMatrix companyId={companyId!} />}
+
+      <Snackbar
+        open={Boolean(snack)}
+        autoHideDuration={4000}
+        onClose={() => setSnack(null)}
+        anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}
+      >
+        <Alert severity={snack?.severity} onClose={() => setSnack(null)} variant="filled">
+          {snack?.msg}
+        </Alert>
+      </Snackbar>
     </Box>
   )
 }

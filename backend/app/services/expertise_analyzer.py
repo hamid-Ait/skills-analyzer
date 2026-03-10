@@ -42,7 +42,9 @@ Given information about people (name, title, bio, department, location, and opti
 7. matched_inferred_expertise_topics: Specific topic areas as a list (e.g., ["bankruptcy", "turnaround", "creditor negotiations"])
 
 Return a JSON array where each element corresponds to the input person (same order).
-Each element must have exactly these keys: primary_expertise, justification, matched_13_categories, sector, geography, inferred_expertise_functional, matched_inferred_expertise_topics.
+Each element must have exactly these keys: name, primary_expertise, justification, matched_13_categories, sector, geography, inferred_expertise_functional, matched_inferred_expertise_topics.
+The "name" field MUST contain the exact person name from the input — this is used to match results back.
+You MUST return exactly one result per input person — never skip, merge, or omit anyone.
 For matched_13_categories, only use values from the exact list above. Return ONLY valid JSON, no prose."""
 
 
@@ -140,33 +142,73 @@ def format_people_for_analysis(people: list[dict]) -> str:
     return "\n".join(lines)
 
 
-def analyze_people(people_data: list[dict], batch_size: int = 10) -> list[dict]:
-    """Analyze a batch of people and return expertise classifications."""
+def _normalize_name(name: str) -> str:
+    """Lowercase and collapse whitespace for fuzzy matching."""
+    return " ".join(name.lower().strip().split())
+
+
+def _parse_llm_response(raw_response: str) -> list[dict]:
+    """Parse LLM JSON response, handling markdown fences."""
+    cleaned = raw_response.strip()
+    if cleaned.startswith("```"):
+        cleaned = cleaned.split("\n", 1)[1] if "\n" in cleaned else cleaned[3:]
+    if cleaned.endswith("```"):
+        cleaned = cleaned[:-3]
+    cleaned = cleaned.strip()
+    results = json.loads(cleaned)
+    return results if isinstance(results, list) else []
+
+
+def analyze_batch_by_name(people_data: list[dict], batch_size: int = 50) -> dict[str, dict]:
+    """Analyze people and return results keyed by normalized name.
+
+    Returns a dict mapping normalized name → result dict.
+    This avoids positional alignment issues with zip().
+    """
     provider = get_provider()
-    all_results = []
+    results_by_name: dict[str, dict] = {}
 
     for i in range(0, len(people_data), batch_size):
         batch = people_data[i:i + batch_size]
         text = format_people_for_analysis(batch)
+        batch_num = i // batch_size + 1
+        total_batches = (len(people_data) + batch_size - 1) // batch_size
 
         try:
             raw_response = provider.analyze_batch(text)
-            # Clean markdown fences if present
-            cleaned = raw_response.strip()
-            if cleaned.startswith("```"):
-                cleaned = cleaned.split("\n", 1)[1] if "\n" in cleaned else cleaned[3:]
-            if cleaned.endswith("```"):
-                cleaned = cleaned[:-3]
-            cleaned = cleaned.strip()
+            results = _parse_llm_response(raw_response)
 
-            results = json.loads(cleaned)
-            if isinstance(results, list):
-                all_results.extend(results)
-            else:
-                log.warning(f"LLM returned non-list for batch starting at {i}")
-                all_results.extend([{}] * len(batch))
+            # Match results by name
+            matched = 0
+            for result in results:
+                result_name = result.get("name", "")
+                if not result_name:
+                    continue
+                norm = _normalize_name(result_name)
+                results_by_name[norm] = result
+                matched += 1
+
+            # Fallback: if LLM didn't return names but count matches, use positional
+            if matched == 0 and len(results) == len(batch):
+                log.warning(f"  Batch {batch_num}: LLM returned no names, falling back to positional matching")
+                for person, result in zip(batch, results):
+                    norm = _normalize_name(person.get("name", ""))
+                    if norm:
+                        results_by_name[norm] = result
+
+            log.info(f"  Batch {batch_num}/{total_batches}: matched {matched}/{len(batch)} by name")
+
         except (json.JSONDecodeError, Exception) as exc:
-            log.error(f"Failed to parse LLM response for batch starting at {i}: {exc}")
-            all_results.extend([{}] * len(batch))
+            log.error(f"  Batch {batch_num}/{total_batches} failed: {exc}")
 
-    return all_results
+    return results_by_name
+
+
+def analyze_people(people_data: list[dict], batch_size: int = 10) -> list[dict]:
+    """Legacy wrapper — returns positional list for backward compat."""
+    results_by_name = analyze_batch_by_name(people_data, batch_size=batch_size)
+    out = []
+    for p in people_data:
+        norm = _normalize_name(p.get("name", ""))
+        out.append(results_by_name.get(norm, {}))
+    return out

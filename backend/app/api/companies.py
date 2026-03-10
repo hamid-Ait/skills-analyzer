@@ -1,13 +1,18 @@
+import logging
+from datetime import datetime, timezone
 from uuid import UUID
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from pydantic import BaseModel
 from sqlalchemy import func, text
 from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.models import Company, Person
 from app.schemas.company import CompanyBrief, CompanyDetail, CompanyList
+
+log = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -144,3 +149,153 @@ def get_company(company_id: UUID, db: Session = Depends(get_db)):
     if not company:
         raise HTTPException(status_code=404, detail="Company not found")
     return CompanyDetail.model_validate(company)
+
+
+class RetryRequest(BaseModel):
+    mode: str = "rescrape"  # "rescrape", "reanalyze", "reenrich"
+
+
+class RetryResponse(BaseModel):
+    status: str
+    message: str
+
+
+@router.post("/companies/{company_id}/retry", response_model=RetryResponse)
+def retry_company(company_id: UUID, body: RetryRequest, db: Session = Depends(get_db)):
+    """Retry processing a company.
+
+    Modes:
+    - rescrape: Delete people, re-scrape from scratch (uses team_url if already discovered)
+    - reanalyze: Keep people, re-run LLM expertise analysis
+    - reenrich: Keep people, re-run LinkedIn enrichment + analysis
+    """
+    company = db.query(Company).filter(Company.id == company_id).first()
+    if not company:
+        raise HTTPException(status_code=404, detail="Company not found")
+
+    # Don't retry if already in progress
+    in_progress = {"pending", "discovering", "scraping", "searching", "analyzing", "resolving", "enriching"}
+    if company.status in in_progress:
+        raise HTTPException(status_code=400, detail=f"Company is already {company.status}")
+
+    if body.mode == "rescrape":
+        # Delete existing people and start fresh
+        db.query(Person).filter(Person.company_id == company_id).delete()
+        company.status = "pending"
+        company.error_message = None
+        company.people_count = 0
+        # Keep team_url so we skip discovery if already found
+        discover = company.team_url is None
+        company.updated_at = datetime.now(timezone.utc)
+        db.commit()
+
+        from app.tasks.scrape_task import scrape_company
+        scrape_company.delay(
+            str(company_id),
+            discover=discover,
+            follow_profiles=True,
+            enrich_linkedin=True,
+        )
+        return RetryResponse(status="ok", message=f"Re-scraping {company.name or company.url}")
+
+    elif body.mode == "reanalyze":
+        # Keep people, re-run LLM analysis for ALL (clears existing)
+        person_ids = [
+            str(p.id) for p in
+            db.query(Person).filter(Person.company_id == company_id).all()
+        ]
+        if not person_ids:
+            raise HTTPException(status_code=400, detail="No people to analyze")
+
+        # Clear old expertise data
+        db.execute(
+            text("""
+                UPDATE people SET
+                    primary_expertise = NULL, justification = NULL,
+                    matched_13_categories = NULL, sector = NULL,
+                    geography = NULL, inferred_expertise_functional = NULL,
+                    matched_inferred_expertise_topics = NULL, expertise_raw = NULL
+                WHERE company_id = :cid
+            """),
+            {"cid": str(company_id)},
+        )
+        company.status = "analyzing"
+        company.error_message = None
+        company.updated_at = datetime.now(timezone.utc)
+        db.commit()
+
+        from app.tasks.analyze_task import analyze_expertise_batch
+        analyze_expertise_batch.delay(str(company_id), person_ids)
+        return RetryResponse(status="ok", message=f"Re-analyzing {len(person_ids)} people")
+
+    elif body.mode == "analyze_missing":
+        # Only analyze people who don't have expertise yet
+        missing = db.query(Person).filter(
+            Person.company_id == company_id,
+            Person.primary_expertise.is_(None),
+        ).all()
+        if not missing:
+            raise HTTPException(status_code=400, detail="All people are already analyzed")
+
+        person_ids = [str(p.id) for p in missing]
+        company.status = "analyzing"
+        company.error_message = None
+        company.updated_at = datetime.now(timezone.utc)
+        db.commit()
+
+        from app.tasks.analyze_task import analyze_expertise_batch
+        analyze_expertise_batch.delay(str(company_id), person_ids)
+        return RetryResponse(status="ok", message=f"Analyzing {len(missing)} unanalyzed people")
+
+    elif body.mode == "reenrich":
+        # Reset LinkedIn enrichment, then re-enrich + re-analyze
+        people = db.query(Person).filter(Person.company_id == company_id).all()
+        if not people:
+            raise HTTPException(status_code=400, detail="No people to enrich")
+
+        person_ids = [str(p.id) for p in people]
+        has_url_ids = [str(p.id) for p in people if p.linkedin_url]
+        no_url_ids = [str(p.id) for p in people if not p.linkedin_url]
+
+        # Clear LinkedIn enrichment + expertise data
+        db.execute(
+            text("""
+                UPDATE people SET
+                    linkedin_enriched = FALSE, linkedin_enriched_at = NULL,
+                    linkedin_headline = NULL, linkedin_summary = NULL,
+                    linkedin_experience = NULL, linkedin_education = NULL,
+                    linkedin_skills = NULL, linkedin_experience_summary = NULL,
+                    primary_expertise = NULL, justification = NULL,
+                    matched_13_categories = NULL, sector = NULL,
+                    geography = NULL, inferred_expertise_functional = NULL,
+                    matched_inferred_expertise_topics = NULL, expertise_raw = NULL
+                WHERE company_id = :cid
+            """),
+            {"cid": str(company_id)},
+        )
+        company.error_message = None
+        company.updated_at = datetime.now(timezone.utc)
+
+        if has_url_ids:
+            # People with LinkedIn URLs → go straight to profile scraper, skip resolve
+            company.status = "enriching"
+            db.commit()
+            from app.tasks.linkedin_task import enrich_linkedin_batch
+            enrich_linkedin_batch.delay(str(company_id), has_url_ids, all_person_ids=person_ids)
+        elif no_url_ids:
+            # No one has URLs — need to resolve first
+            company.status = "resolving"
+            db.commit()
+            from app.tasks.resolve_linkedin_task import resolve_linkedin_urls
+            resolve_linkedin_urls.delay(str(company_id), person_ids)
+        else:
+            # No people at all — just re-analyze
+            company.status = "analyzing"
+            db.commit()
+            from app.tasks.analyze_task import analyze_expertise_batch
+            analyze_expertise_batch.delay(str(company_id), person_ids)
+
+        return RetryResponse(status="ok", message=f"Re-enriching {len(person_ids)} people ({len(has_url_ids)} with URLs)")
+
+    else:
+        raise HTTPException(status_code=400, detail=f"Unknown mode: {body.mode}")
