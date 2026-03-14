@@ -10,7 +10,10 @@ log = logging.getLogger(__name__)
 
 
 def _build_experience_summary(experience: list[dict]) -> str:
-    """Build a text summary from the first 5 LinkedIn experience entries."""
+    """Build a text summary from the first 5 LinkedIn experience entries.
+
+    Each role is rendered as: "Position @ Company · Duration · Location"
+    """
     if not experience:
         return "—"
     lines = []
@@ -19,9 +22,14 @@ def _build_experience_summary(experience: list[dict]) -> str:
         company = exp.get("companyName") or ""
         duration = exp.get("duration") or ""
         location = exp.get("location") or ""
-        parts = [p for p in [position, company, duration, location] if p]
-        if parts:
-            lines.append("\n".join(parts))
+        role = position
+        if company:
+            role = f"{role} @ {company}" if role else company
+        detail_parts = [p for p in [duration, location] if p]
+        if detail_parts:
+            role = f"{role} · {' · '.join(detail_parts)}" if role else " · ".join(detail_parts)
+        if role:
+            lines.append(role)
     return "\n".join(lines) if lines else "—"
 
 

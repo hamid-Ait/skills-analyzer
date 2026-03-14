@@ -160,6 +160,7 @@ def fetch_html(url: str, session: WafSession) -> str:
     resp = session.get(url)
     resp.raise_for_status()
     html = resp.text
+
     if DEBUG_MODE:
         save_path = _html_save_path(url)
         save_path.parent.mkdir(parents=True, exist_ok=True)
@@ -754,6 +755,7 @@ _PATH_PATTERNS: list[tuple[str, int]] = [
     ("/staff",            3),
     ("/leadership",       3),
     ("/management",       3),
+    ("/management-team",  3),
     ("/executives",       3),
     ("/exec-team",        3),
     ("/faculty",          3),
@@ -835,8 +837,10 @@ def _score_anchor(a, base_url: str) -> tuple[int, str]:
     path_lower = parsed.path.lower()
     text_lower = a.get_text(separator=" ", strip=True).lower()
 
-    # Same domain only
-    if parsed.netloc != urlparse(base_url).netloc:
+    # Same domain only (strip www. to handle redirects like leshabank.com → www.leshabank.com)
+    base_netloc = urlparse(base_url).netloc.removeprefix("www.")
+    link_netloc = parsed.netloc.removeprefix("www.")
+    if link_netloc != base_netloc:
         return 0, ""
 
     # Skip obvious non-team paths
@@ -1060,6 +1064,35 @@ def normalise_person(raw: dict, source_url: str) -> dict:
             name = name[: -len(loc)].strip()
         person["name"] = name or None
 
+    # Split name + title concatenations caused by .get_text() on card elements
+    # that contain both name and title as child elements without a separator.
+    # E.g. "Ahmed Abou ElelaHead of Corporate" → name + title split.
+    # Detection: lowercase letter immediately followed by a known title keyword.
+    _CONCAT_TITLE_RE = re.compile(
+        r"(?<=[a-z])"
+        r"((?:Head\s+of|Group\s+Chief|Deputy\s+Chief|Chief|"
+        r"Managing\s+Director|Executive\s+Director|"
+        r"Senior\s+Vice\s+President|Executive\s+Vice\s+President|"
+        r"Vice\s+President|President|Director|Partner|"
+        r"General\s+Manager|Senior\s+Manager|Manager|"
+        r"Senior\s+Associate|Associate|Officer|Counsel|"
+        r"Advisor|Specialist|Coordinator|Supervisor|"
+        r"Head\b|Lead\b)"
+        r".*)",
+        re.DOTALL,
+    )
+    name = person.get("name") or ""
+    if name:
+        m = _CONCAT_TITLE_RE.search(name)
+        if m:
+            extracted_title = m.group(1).strip()
+            clean_name = name[: m.start(1)].strip()
+            if clean_name:
+                person["name"] = clean_name
+                # Only set title if not already populated
+                if not person.get("title"):
+                    person["title"] = extracted_title
+
     # Drop company LinkedIn pages — only personal profiles (/in/) are valid
     li = person.get("linkedin_url")
     if li and "linkedin.com" in li and "/in/" not in li:
@@ -1091,6 +1124,29 @@ def normalise_person(raw: dict, source_url: str) -> dict:
         path_parts = set(urlparse(purl).path.strip("/").split("/"))
         if path_parts & _NON_PERSON_PATH_SEGMENTS:
             person["profile_url"] = None
+
+    # Cross-field sanity: detect when location was filled with a job title.
+    # LLM-generated scrapers sometimes mislabel a "position" field as "location".
+    # Real locations contain geographic keywords; titles contain role keywords.
+    _TITLE_INDICATORS = re.compile(
+        r"\b(director|partner|manager|president|officer|board\s+member|"
+        r"vice\s+president|associate|analyst|consultant|counsel|"
+        r"head\s+of|chief|ceo|cfo|coo|cto|cio|svp|evp|avp|"
+        r"managing|senior|junior|principal|leader|chair)\b",
+        re.IGNORECASE,
+    )
+    _GEO_INDICATORS = re.compile(
+        r"\b(new\s+york|london|paris|chicago|los\s+angeles|tokyo|dubai|"
+        r"singapore|hong\s+kong|sydney|usa|uk|us|europe|asia|"
+        r"north\s+america|middle\s+east|africa|australia|germany|"
+        r"france|india|canada|china|brazil|california|texas|"
+        r"massachusetts|illinois|city|state|county)\b",
+        re.IGNORECASE,
+    )
+    loc = person.get("location") or ""
+    if loc and _TITLE_INDICATORS.search(loc) and not _GEO_INDICATORS.search(loc):
+        # Location looks like a job title — clear it
+        person["location"] = None
 
     # Annotate source
     person["_source_url"] = source_url
@@ -1173,10 +1229,14 @@ def enrich_from_profile_pages(
         log.info(
             f"  Modal-based site detected ({bio_from_listing}/{len(people)} people "
             "have bio from listing/modal). Skipping profile enrichment for people "
-            "with empty modals."
+            "who already have bios."
         )
 
-    # Build the list of (index, person, url) to enrich
+    # Build the list of (index, person, url) to enrich.
+    # People who already have a bio (≥80 chars) are skipped — whether from
+    # modal extraction or the listing page.  On "modal sites" we used to skip
+    # ALL remaining people, but that was too aggressive — people whose modals
+    # were empty or who have bios on a separate detail page were missed.
     to_enrich: list[tuple[int, dict, str]] = []
     for idx, person in enumerate(people):
         if len(to_enrich) >= max_profiles:
@@ -1185,8 +1245,6 @@ def enrich_from_profile_pages(
         if not purl:
             continue
         if person.get("bio") and len(person["bio"]) >= _MIN_BIO_LEN:
-            continue
-        if is_modal_site:
             continue
         to_enrich.append((idx, person, purl))
 
@@ -1784,6 +1842,91 @@ def scrape_site(
     # Step 3 — normalise to canonical people schema
     all_records = normalise_people(all_records, url)
     log.info(f"  {len(all_records)} valid people after normalisation")
+
+    # Step 3.1 — fallback: extract bios from Bootstrap modals in page HTML.
+    # Many sites use data-bs-toggle="modal" / data-target="#id" cards linked to
+    # page-level <div class="modal" id="..."> containers.  If the LLM-generated
+    # scraper missed the modal→bio link, this deterministic fallback catches it.
+    _MIN_BIO_LEN_MODAL = 80
+    people_missing_bio = [p for p in all_records if not p.get("bio") or len(p.get("bio", "")) < _MIN_BIO_LEN_MODAL]
+    if people_missing_bio and len(people_missing_bio) >= len(all_records) * 0.5 and html1:
+        try:
+            from bs4 import BeautifulSoup as _BS
+            soup = _BS(html1, "html.parser")
+            # Find modal containers (Bootstrap 4/5 pattern)
+            modals = soup.select("div.modal[id]")
+            if modals:
+                # Build id → bio text map from modal containers
+                modal_bios: dict[str, str] = {}
+                for modal in modals:
+                    mid = modal.get("id", "")
+                    # Look for bio text in common content containers
+                    bio_el = modal.select_one(
+                        ".about-self, .bio, .description, .modal-body .content, "
+                        ".detail, .person-bio, .member-bio, .team-bio, .text-content"
+                    )
+                    if not bio_el:
+                        # Fallback: grab all <p> tags inside modal-body
+                        body = modal.select_one(".modal-body")
+                        if body:
+                            paragraphs = body.find_all("p")
+                            if paragraphs:
+                                bio_text = "\n\n".join(p.get_text(strip=True) for p in paragraphs if p.get_text(strip=True))
+                                if len(bio_text) >= _MIN_BIO_LEN_MODAL:
+                                    modal_bios[mid] = bio_text
+                                continue
+                    if bio_el:
+                        bio_text = "\n\n".join(
+                            p.get_text(strip=True) for p in bio_el.find_all("p")
+                            if p.get_text(strip=True)
+                        ) or bio_el.get_text(strip=True)
+                        if len(bio_text) >= _MIN_BIO_LEN_MODAL:
+                            modal_bios[mid] = bio_text
+
+                if modal_bios:
+                    # Match each person to a modal bio by name (full → last → first).
+                    # Track used modals to avoid assigning the same bio to two people.
+                    used_modals: set[str] = set()
+                    modal_matched = 0
+
+                    def _find_modal(pname: str) -> str | None:
+                        parts = pname.split()
+                        if not parts:
+                            return None
+                        # 1. Full name match (most specific)
+                        for mid, bio in modal_bios.items():
+                            if mid not in used_modals and pname.lower() in bio.lower():
+                                return mid
+                        # 2. Last name ≥3 chars (avoids "Al", "El", "De")
+                        if len(parts) >= 2:
+                            last = parts[-1]
+                            if len(last) >= 3:
+                                for mid, bio in modal_bios.items():
+                                    if mid not in used_modals and last.lower() in bio.lower():
+                                        return mid
+                        # 3. First name fallback
+                        first = parts[0]
+                        for mid, bio in modal_bios.items():
+                            if mid not in used_modals and first.lower() in bio.lower():
+                                return mid
+                        return None
+
+                    for person in all_records:
+                        if person.get("bio") and len(person["bio"]) >= _MIN_BIO_LEN_MODAL:
+                            continue
+                        pname = person.get("name", "")
+                        if not pname:
+                            continue
+                        mid = _find_modal(pname)
+                        if mid:
+                            person["bio"] = modal_bios[mid]
+                            used_modals.add(mid)
+                            modal_matched += 1
+
+                    if modal_matched:
+                        log.info(f"  [MODAL-FALLBACK] Extracted bios from {modal_matched} page-level modals")
+        except Exception as exc:
+            log.warning(f"  [MODAL-FALLBACK] Failed: {exc}")
 
     # Step 3.5 — probe first profile page to generate scrape_profile_page()
     # Only runs when: LLM detected profile links AND the function isn't already

@@ -5,13 +5,15 @@ from app.tasks.celery_app import celery_app
 from app.database import SessionLocal
 from app.models import Job, Company, Person
 from app.services.expertise_analyzer import (
-    analyze_batch_by_name, format_people_for_analysis, get_provider,
+    format_people_for_analysis, get_provider,
     _parse_llm_response, _normalize_name,
 )
+from app.services.keyword_matcher import match_person_from_db
+from app.services.expertise_merger import merge, merge_keyword_only
 
 log = logging.getLogger(__name__)
 
-BATCH_SIZE = 50
+BATCH_SIZE = 10
 
 
 def _build_person_entry(p: Person) -> dict:
@@ -35,24 +37,44 @@ def _build_person_entry(p: Person) -> dict:
 
 
 def _apply_result(person: Person, result: dict):
-    """Write LLM result fields onto a Person record."""
+    """Write merged result fields onto a Person record."""
     person.primary_expertise = result.get("primary_expertise")
     person.justification = result.get("justification")
-    person.matched_13_categories = result.get("matched_13_categories", [])
-    person.sector = result.get("sector")
-    person.geography = result.get("geography")
-    person.inferred_expertise_functional = result.get("inferred_expertise_functional")
-    person.matched_inferred_expertise_topics = result.get("matched_inferred_expertise_topics", [])
+    # Support both old (matched_13_categories) and new (explicit_expertise_13) field names
+    person.matched_13_categories = (
+        result.get("explicit_expertise_13")
+        or result.get("matched_13_categories", [])
+    )
+    # Sectors/geographies: new prompt returns arrays, DB column is Text
+    sectors = result.get("sectors") or result.get("sector")
+    if isinstance(sectors, list):
+        sectors = "; ".join(sectors) if sectors else None
+    person.sector = sectors
+    geographies = result.get("geographies") or result.get("geography")
+    if isinstance(geographies, list):
+        geographies = "; ".join(geographies) if geographies else None
+    person.geography = geographies
+    func = result.get("inferred_expertise_functional", [])
+    if isinstance(func, str):
+        func = [f.strip() for f in func.split(",") if f.strip()]
+    person.inferred_expertise_functional = func
+    person.matched_inferred_expertise_topics = (
+        result.get("topic_overlap")
+        or result.get("matched_inferred_expertise_topics", [])
+    )
     person.expertise_raw = result
     person.updated_at = datetime.now(timezone.utc)
 
 
 @celery_app.task(bind=True, max_retries=1, time_limit=72000)
 def analyze_expertise_batch(self, company_id: str, person_ids: list[str]):
-    """Analyze expertise for all people in a company using LLM.
+    """Analyze expertise using hybrid keyword + LLM approach.
 
-    Processes in batches of BATCH_SIZE, matching results by name and
-    committing to DB after each batch so progress is never lost.
+    For each batch:
+    1. Run keyword matching (fast, deterministic)
+    2. Run LLM classification (semantic, contextual)
+    3. Merge results with taxonomy validation
+    4. Store to DB
     """
     db = SessionLocal()
     try:
@@ -68,13 +90,13 @@ def analyze_expertise_batch(self, company_id: str, person_ids: list[str]):
             company.updated_at = datetime.now(timezone.utc)
             db.commit()
 
-        # Build name → Person lookup for matching LLM results back
-        name_to_people: dict[str, list[Person]] = {}
+        # Step 1: Run keyword matching for all people upfront (fast)
+        keyword_results: dict[str, object] = {}
         for p in people:
             norm = _normalize_name(p.name or "")
-            name_to_people.setdefault(norm, []).append(p)
+            keyword_results[norm] = match_person_from_db(p)
 
-        # Process in batches
+        # Step 2: Process in LLM batches
         provider = get_provider()
         total_updated = 0
         total_batches = (len(people) + BATCH_SIZE - 1) // BATCH_SIZE
@@ -89,29 +111,42 @@ def analyze_expertise_batch(self, company_id: str, person_ids: list[str]):
                 raw_response = provider.analyze_batch(text)
                 results = _parse_llm_response(raw_response)
 
-                # Match by name
-                batch_updated = 0
-                matched_by_name = 0
+                # Build name → LLM result mapping for this batch
+                llm_by_name: dict[str, dict] = {}
                 for result in results:
                     result_name = result.get("name", "")
-                    if not result_name or not result.get("primary_expertise"):
-                        continue
-                    norm = _normalize_name(result_name)
-                    candidates = name_to_people.get(norm, [])
-                    for person in candidates:
-                        if person.primary_expertise is None:
-                            _apply_result(person, result)
-                            batch_updated += 1
-                            matched_by_name += 1
-                            break
+                    if result_name:
+                        llm_by_name[_normalize_name(result_name)] = result
 
-                # Fallback: positional matching for results without names
-                if matched_by_name == 0 and len(results) == len(batch):
+                # Positional fallback if LLM returned no names
+                if not llm_by_name and len(results) == len(batch):
                     log.warning(f"  Batch {batch_num}: no name matches, using positional fallback")
                     for person, result in zip(batch, results):
-                        if result and result.get("primary_expertise") and person.primary_expertise is None:
-                            _apply_result(person, result)
-                            batch_updated += 1
+                        norm = _normalize_name(person.name or "")
+                        if norm:
+                            llm_by_name[norm] = result
+
+                # Step 3: Merge keyword + LLM for each person in this batch
+                batch_updated = 0
+                for person in batch:
+                    norm = _normalize_name(person.name or "")
+                    if person.primary_expertise is not None:
+                        continue  # Already analyzed
+
+                    kw_result = keyword_results.get(norm)
+                    llm_result = llm_by_name.get(norm, {})
+
+                    if kw_result and llm_result:
+                        merged = merge(kw_result, llm_result)
+                    elif llm_result:
+                        merged = llm_result
+                    elif kw_result:
+                        merged = merge_keyword_only(kw_result)
+                    else:
+                        continue
+
+                    _apply_result(person, merged)
+                    batch_updated += 1
 
                 total_updated += batch_updated
                 db.commit()

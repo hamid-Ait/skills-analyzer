@@ -26,7 +26,7 @@ const columns: GridColDef[] = [
   { field: 'primary_expertise', headerName: 'Primary Expertise', flex: 0.8, minWidth: 150 },
   {
     field: 'matched_13_categories',
-    headerName: 'Categories',
+    headerName: 'Matched 13 Expertise',
     flex: 1,
     minWidth: 200,
     renderCell: (params) => (
@@ -40,7 +40,25 @@ const columns: GridColDef[] = [
       </Box>
     ),
   },
-  { field: 'sector', headerName: 'Sector', flex: 0.6, minWidth: 100 },
+  {
+    field: 'sector',
+    headerName: 'Sector',
+    flex: 0.8,
+    minWidth: 150,
+    renderCell: (params) => {
+      const sectors = params.value ? params.value.split('; ').filter(Boolean) : []
+      return (
+        <Box sx={{ display: 'flex', gap: 0.5, flexWrap: 'wrap' }}>
+          {sectors.slice(0, 2).map((s: string) => (
+            <Chip key={s} label={s} size="small" variant="outlined" color="info" sx={{ fontSize: '0.7rem' }} />
+          ))}
+          {sectors.length > 2 && (
+            <Chip label={`+${sectors.length - 2}`} size="small" color="info" sx={{ fontSize: '0.7rem' }} />
+          )}
+        </Box>
+      )
+    },
+  },
   {
     field: 'linkedin_url',
     headerName: 'LinkedIn',
