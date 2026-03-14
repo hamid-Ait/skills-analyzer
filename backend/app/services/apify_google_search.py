@@ -98,6 +98,20 @@ class ApifyLinkedInEmployeesClient:
             log.error(f"Apify LinkedIn employees search failed for {company_name}: {exc}")
             return []
 
+    def search_person_by_name(self, person_name: str, company_linkedin_url: str) -> Optional[dict]:
+        """
+        Search for a specific person by name within a company's LinkedIn employees.
+        Uses the searchQuery parameter for targeted lookup — returns at most 1 result.
+        """
+        run_input = {
+            "companies": [company_linkedin_url],
+            "maxItems": 1,
+            "searchQuery": person_name,
+        }
+        run = self.client.actor(self.ACTOR_ID).call(run_input=run_input)
+        items = list(self.client.dataset(run["defaultDatasetId"]).iterate_items())
+        return self._parse_employee(items[0]) if items else None
+
     @staticmethod
     def _parse_employee(item: dict) -> Optional[dict]:
         """Parse an Apify harvestapi/linkedin-company-employees result."""
@@ -176,7 +190,11 @@ class ApifyLinkedInEmployeesClient:
 
 
 def _build_experience_summary_from_employees(experience: list[dict]) -> str:
-    """Build a text summary from linkedin-company-employees experience entries."""
+    """Build a text summary from linkedin-company-employees experience entries.
+
+    Each role is rendered as: "Position @ Company · Duration · Location"
+    Roles are separated by newlines for easy splitting in the frontend.
+    """
     if not experience:
         return "—"
     lines = []
@@ -185,7 +203,13 @@ def _build_experience_summary_from_employees(experience: list[dict]) -> str:
         company = exp.get("companyName") or ""
         duration = exp.get("duration") or ""
         location = exp.get("location") or ""
-        parts = [p for p in [position, company, duration, location] if p]
-        if parts:
-            lines.append("\n".join(parts))
+        # "Position @ Company · Duration · Location"
+        role = position
+        if company:
+            role = f"{role} @ {company}" if role else company
+        detail_parts = [p for p in [duration, location] if p]
+        if detail_parts:
+            role = f"{role} · {' · '.join(detail_parts)}" if role else " · ".join(detail_parts)
+        if role:
+            lines.append(role)
     return "\n".join(lines) if lines else "—"

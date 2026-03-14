@@ -37,7 +37,7 @@ class Person(Base):
     matched_13_categories: Mapped[list | None] = mapped_column(ARRAY(String), nullable=True)
     sector: Mapped[str | None] = mapped_column(Text, nullable=True)
     geography: Mapped[str | None] = mapped_column(Text, nullable=True)
-    inferred_expertise_functional: Mapped[str | None] = mapped_column(Text, nullable=True)
+    inferred_expertise_functional: Mapped[list | None] = mapped_column(ARRAY(String), nullable=True)
     matched_inferred_expertise_topics: Mapped[list | None] = mapped_column(ARRAY(String), nullable=True)
     linkedin_experience_summary: Mapped[str | None] = mapped_column(Text, nullable=True)
     data_source: Mapped[str | None] = mapped_column(String(100), nullable=True)

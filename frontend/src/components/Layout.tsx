@@ -17,7 +17,7 @@ export default function Layout({ children }: { children: ReactNode }) {
             <Groups />
           </IconButton>
           <Typography variant="h6" sx={{ flexGrow: 1, fontWeight: 600 }}>
-            People Intelligence Platform
+            TalentGraph
           </Typography>
           <Button
             color="inherit"

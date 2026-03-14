@@ -32,7 +32,7 @@ class PersonDetail(PersonBrief):
     profile_enriched: bool = False
     justification: Optional[str] = None
     geography: Optional[str] = None
-    inferred_expertise_functional: Optional[str] = None
+    inferred_expertise_functional: Optional[list[str]] = None
     matched_inferred_expertise_topics: Optional[list[str]] = None
     linkedin_experience_summary: Optional[str] = None
     data_source: Optional[str] = None

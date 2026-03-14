@@ -60,7 +60,7 @@ export interface PersonDetail extends PersonBrief {
   profile_url: string | null
   justification: string | null
   geography: string | null
-  inferred_expertise_functional: string | null
+  inferred_expertise_functional: string[] | null
   matched_inferred_expertise_topics: string[] | null
   linkedin_headline: string | null
   linkedin_experience_summary: string | null

@@ -92,16 +92,11 @@ export default function PersonDetailModal({ personId, onClose }: Props) {
             {/* Expertise */}
             <DetailRow label="Primary Expertise" value={person.primary_expertise} />
             <DetailRow label="Justification" value={person.justification} />
-            <DetailRow label="Functional Expertise" value={person.inferred_expertise_functional} />
-            <DetailRow label="Sector" value={person.sector} />
-            <DetailRow label="Geography" value={person.geography} />
-            <DetailRow label="Location" value={person.location} />
-
             {/* Categories */}
             {person.matched_13_categories && person.matched_13_categories.length > 0 && (
               <Box sx={{ mb: 1.5 }}>
                 <Typography variant="caption" color="text.secondary" fontWeight={600}>
-                  Categories
+                  Matched 13 Expertise
                 </Typography>
                 <Box sx={{ display: 'flex', gap: 0.5, flexWrap: 'wrap', mt: 0.5 }}>
                   {person.matched_13_categories.map((cat) => (
@@ -110,12 +105,56 @@ export default function PersonDetailModal({ personId, onClose }: Props) {
                 </Box>
               </Box>
             )}
+            {/* Functional Expertise */}
+            {person.inferred_expertise_functional && person.inferred_expertise_functional.length > 0 && (
+              <Box sx={{ mb: 1.5 }}>
+                <Typography variant="caption" color="text.secondary" fontWeight={600}>
+                  Inferred Expertise
+                </Typography>
+                <Box sx={{ display: 'flex', gap: 0.5, flexWrap: 'wrap', mt: 0.5 }}>
+                  {person.inferred_expertise_functional.map((f) => (
+                    <Chip key={f} label={f} size="small" variant="outlined" color="success" />
+                  ))}
+                </Box>
+              </Box>
+            )}
+
+            {/* Sector */}
+            {person.sector && person.sector !== '—' && (
+              <Box sx={{ mb: 1.5 }}>
+                <Typography variant="caption" color="text.secondary" fontWeight={600}>
+                  Sector
+                </Typography>
+                <Box sx={{ display: 'flex', gap: 0.5, flexWrap: 'wrap', mt: 0.5 }}>
+                  {person.sector.split('; ').filter(Boolean).map((s) => (
+                    <Chip key={s} label={s} size="small" variant="outlined" color="info" />
+                  ))}
+                </Box>
+              </Box>
+            )}
+
+            {/* Geography */}
+            {person.geography && person.geography !== '—' && (
+              <Box sx={{ mb: 1.5 }}>
+                <Typography variant="caption" color="text.secondary" fontWeight={600}>
+                  Geography
+                </Typography>
+                <Box sx={{ display: 'flex', gap: 0.5, flexWrap: 'wrap', mt: 0.5 }}>
+                  {person.geography.split('; ').filter(Boolean).map((g) => (
+                    <Chip key={g} label={g} size="small" variant="outlined" color="secondary" />
+                  ))}
+                </Box>
+              </Box>
+            )}
+            <DetailRow label="Location" value={person.location} />
+
+
 
             {/* Expertise topics */}
             {person.matched_inferred_expertise_topics && person.matched_inferred_expertise_topics.length > 0 && (
               <Box sx={{ mb: 1.5 }}>
                 <Typography variant="caption" color="text.secondary" fontWeight={600}>
-                  Expertise Topics
+                  Matched Inferred Expertise
                 </Typography>
                 <Box sx={{ display: 'flex', gap: 0.5, flexWrap: 'wrap', mt: 0.5 }}>
                   {person.matched_inferred_expertise_topics.map((topic) => (
@@ -127,7 +166,20 @@ export default function PersonDetailModal({ personId, onClose }: Props) {
 
             {/* LinkedIn enrichment */}
             <DetailRow label="LinkedIn Headline" value={person.linkedin_headline} />
-            <DetailRow label="LinkedIn Experience" value={person.linkedin_experience_summary} />
+            {person.linkedin_experience_summary && (
+              <Box sx={{ mb: 1.5 }}>
+                <Typography variant="caption" color="text.secondary" fontWeight={600}>
+                  LinkedIn Experience
+                </Typography>
+                <Box component="ul" sx={{ m: 0, pl: 2.5 }}>
+                  {person.linkedin_experience_summary.split('\n').filter(Boolean).map((line, i) => (
+                    <li key={i}>
+                      <Typography variant="body2">{line}</Typography>
+                    </li>
+                  ))}
+                </Box>
+              </Box>
+            )}
 
             {/* Meta */}
             <Divider sx={{ my: 2 }} />

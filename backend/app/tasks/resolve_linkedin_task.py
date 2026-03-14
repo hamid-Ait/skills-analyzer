@@ -1,6 +1,6 @@
 import logging
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
-from difflib import SequenceMatcher
 
 from app.tasks.celery_app import celery_app
 from app.database import SessionLocal
@@ -10,51 +10,48 @@ from app.services.apify_google_search import ApifyLinkedInEmployeesClient
 log = logging.getLogger(__name__)
 
 
-def _normalize_name(name: str) -> str:
-    """Normalize name for fuzzy matching."""
-    return " ".join(name.lower().strip().split())
+def _search_single(client, person_name, company_linkedin_url):
+    """Search for a single person by name. Returns (name, profile_dict | None)."""
+    try:
+        return person_name, client.search_person_by_name(person_name, company_linkedin_url)
+    except Exception as exc:
+        log.warning(f"Search failed for {person_name}: {exc}")
+        return person_name, None
 
 
-def _name_similarity(a: str, b: str) -> float:
-    """Return similarity ratio between two names (0-1)."""
-    return SequenceMatcher(None, _normalize_name(a), _normalize_name(b)).ratio()
-
-
-def _match_employees_to_people(people: list, employees: list[dict], threshold: float = 0.8):
-    """
-    Match LinkedIn employees to website-scraped people by name.
-    Returns list of (person, employee_dict) tuples for matches.
-    """
-    matches = []
-    used_employees = set()
-
-    for person in people:
-        best_match = None
-        best_score = 0
-
-        for i, emp in enumerate(employees):
-            if i in used_employees:
-                continue
-            score = _name_similarity(person.name, emp["name"])
-            if score > best_score:
-                best_score = score
-                best_match = (i, emp)
-
-        if best_match and best_score >= threshold:
-            idx, emp = best_match
-            used_employees.add(idx)
-            matches.append((person, emp))
-
-    return matches
+def _apply_profile(person, profile):
+    """Apply rich LinkedIn profile data to a Person model instance."""
+    person.linkedin_url = profile.get("linkedin_url")
+    if profile.get("linkedin_headline"):
+        person.linkedin_headline = profile["linkedin_headline"]
+    if profile.get("linkedin_summary"):
+        person.linkedin_summary = profile["linkedin_summary"]
+    if profile.get("linkedin_experience"):
+        person.linkedin_experience = profile["linkedin_experience"]
+    if profile.get("linkedin_education"):
+        person.linkedin_education = profile["linkedin_education"]
+    if profile.get("linkedin_skills"):
+        person.linkedin_skills = profile["linkedin_skills"]
+    if profile.get("linkedin_experience_summary"):
+        person.linkedin_experience_summary = profile["linkedin_experience_summary"]
+    if not person.image_url and profile.get("image_url"):
+        person.image_url = profile["image_url"]
+    if not person.location and profile.get("location"):
+        person.location = profile["location"]
+    if not person.bio and profile.get("bio"):
+        person.bio = profile["bio"]
+    person.linkedin_enriched = True
+    person.linkedin_enriched_at = datetime.now(timezone.utc)
+    person.updated_at = datetime.now(timezone.utc)
 
 
 @celery_app.task(bind=True, max_retries=1, time_limit=3600)
 def resolve_linkedin_urls(self, company_id: str, person_ids: list[str]):
     """
-    Resolve missing LinkedIn URLs for website-scraped people.
-    Step 1: Fetch company employees from LinkedIn, match by name.
-    Step 2: For remaining unmatched, Google search individual profiles.
-    Then chain to enrich_linkedin_batch.
+    Resolve missing LinkedIn URLs by searching each person by name
+    using the company employees actor with searchQuery parameter.
+    Uses parallel threads (max 4) for speed.
+    Then chains to enrich_linkedin_batch.
     """
     db = SessionLocal()
     try:
@@ -80,53 +77,44 @@ def resolve_linkedin_urls(self, company_id: str, person_ids: list[str]):
         log.info(f"Resolving LinkedIn URLs for {len(people)} people in {company_name}")
 
         client = ApifyLinkedInEmployeesClient()
+
+        # Resolve company LinkedIn URL once
+        if "linkedin.com/company/" in (company.url or ""):
+            company_linkedin_url = company.url
+        else:
+            company_linkedin_url = client._resolve_linkedin_company_url(
+                company_name, company.url
+            )
+
+        if not company_linkedin_url:
+            log.warning(f"Could not find LinkedIn company page for {company_name}")
+            _chain_enrichment(company_id, person_ids)
+            return
+
+        log.info(f"Using LinkedIn company URL: {company_linkedin_url}")
+
+        # Search each person in parallel
         resolved = 0
+        with ThreadPoolExecutor(max_workers=4) as executor:
+            futures = {
+                executor.submit(
+                    _search_single, client, p.name, company_linkedin_url
+                ): p
+                for p in people
+            }
+            for i, future in enumerate(as_completed(futures)):
+                person = futures[future]
+                name, profile = future.result()
+                if profile:
+                    _apply_profile(person, profile)
+                    resolved += 1
+                    log.info(f"  Resolved: {person.name} -> {profile.get('linkedin_url')}")
 
-        # Step 1: Fetch company employees and match by name
-        employees = client.search_company_people(company_name, company.url)
-        if employees:
-            matches = _match_employees_to_people(people, employees)
-            for person, emp in matches:
-                person.linkedin_url = emp.get("linkedin_url")
-                # Save rich LinkedIn data from company employees actor
-                if emp.get("linkedin_headline"):
-                    person.linkedin_headline = emp["linkedin_headline"]
-                if emp.get("linkedin_summary"):
-                    person.linkedin_summary = emp["linkedin_summary"]
-                if emp.get("linkedin_experience"):
-                    person.linkedin_experience = emp["linkedin_experience"]
-                if emp.get("linkedin_education"):
-                    person.linkedin_education = emp["linkedin_education"]
-                if emp.get("linkedin_skills"):
-                    person.linkedin_skills = emp["linkedin_skills"]
-                if emp.get("linkedin_experience_summary"):
-                    person.linkedin_experience_summary = emp["linkedin_experience_summary"]
-                if not person.image_url and emp.get("image_url"):
-                    person.image_url = emp["image_url"]
-                if not person.location and emp.get("location"):
-                    person.location = emp["location"]
-                if not person.bio and emp.get("bio"):
-                    person.bio = emp["bio"]
-                person.linkedin_enriched = True
-                person.linkedin_enriched_at = datetime.now(timezone.utc)
-                person.updated_at = datetime.now(timezone.utc)
-                resolved += 1
+                if (i + 1) % 20 == 0:
+                    db.commit()
+                    log.info(f"  Progress: {resolved}/{len(people)} resolved so far")
 
-            db.commit()
-            log.info(
-                f"Step 1 (company employees): matched {resolved}/{len(people)} "
-                f"people from {len(employees)} LinkedIn employees"
-            )
-
-        # Step 2: Google search for remaining unmatched people
-        still_missing = [p for p in people if not p.linkedin_url]
-        if still_missing:
-            log.info(f"Step 2 (Google search): resolving {len(still_missing)} remaining people")
-            google_resolved = _google_search_linkedin_urls(
-                client, still_missing, company_name, company.url, db
-            )
-            resolved += google_resolved
-
+        db.commit()
         log.info(f"Total LinkedIn URLs resolved: {resolved}/{len(people)} for {company_name}")
 
         # Chain to LinkedIn enrichment with ALL person_ids
@@ -138,77 +126,6 @@ def resolve_linkedin_urls(self, company_id: str, person_ids: list[str]):
         _chain_enrichment(company_id, person_ids)
     finally:
         db.close()
-
-
-def _google_search_linkedin_urls(
-    client: ApifyLinkedInEmployeesClient,
-    people: list,
-    company_name: str,
-    company_url: str,
-    db,
-    batch_size: int = 10,
-) -> int:
-    """
-    Search Google for LinkedIn profiles of individual people.
-    Batches queries to reduce API calls.
-    """
-    from urllib.parse import urlparse
-    domain = urlparse(company_url).netloc or company_url
-    domain = domain.replace("www.", "")
-    resolved = 0
-
-    # Build search queries in batches
-    for i in range(0, len(people), batch_size):
-        batch = people[i:i + batch_size]
-        queries = []
-        for person in batch:
-            # Use both company name and domain for better matching
-            query = f'site:linkedin.com/in "{person.name}" "{company_name}" OR "{domain}"'
-            queries.append({"person": person, "query": query})
-
-        try:
-            # Run all queries in one Google search actor call
-            # The actor expects queries as a newline-separated string
-            run_input = {
-                "queries": "\n".join(q["query"] for q in queries),
-                "maxPagesPerQuery": 1,
-                "resultsPerPage": 3,
-                "languageCode": "en",
-                "mobileResults": False,
-            }
-            run = client.client.actor(client.GOOGLE_ACTOR_ID).call(run_input=run_input)
-            dataset = client.client.dataset(run["defaultDatasetId"])
-            items = list(dataset.iterate_items())
-
-            # Match results back to people
-            for item in items:
-                search_query = item.get("searchQuery", {}).get("term", "")
-                # Find which person this result is for
-                person = None
-                for q in queries:
-                    if q["person"].name.lower() in search_query.lower():
-                        person = q["person"]
-                        break
-
-                if not person or person.linkedin_url:
-                    continue
-
-                # Find first linkedin.com/in/ result
-                for result in item.get("organicResults", []):
-                    url = result.get("url", "")
-                    if "linkedin.com/in/" in url:
-                        person.linkedin_url = url.split("?")[0]  # Strip query params
-                        person.updated_at = datetime.now(timezone.utc)
-                        resolved += 1
-                        log.info(f"  Google resolved: {person.name} -> {person.linkedin_url}")
-                        break
-
-            db.commit()
-
-        except Exception as exc:
-            log.warning(f"Google search batch failed: {exc}")
-
-    return resolved
 
 
 def _chain_enrichment(company_id: str, person_ids: list[str]):

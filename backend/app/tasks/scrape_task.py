@@ -65,8 +65,8 @@ def scrape_company(self, company_id: str, discover: bool = True,
 
         session = WafSession(proxies=proxy_list, min_delay=0.8, max_delay=2.0)
 
-        # Discover team page
-        team_url = company.url
+        # Discover team page (or reuse previously discovered team_url)
+        team_url = company.team_url or company.url
         if discover:
             found = agent.discover_team_url(client, company.url, session)
             if found:
