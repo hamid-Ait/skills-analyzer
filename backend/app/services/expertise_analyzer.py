@@ -167,6 +167,7 @@ class ClaudeProvider(BaseLLMProvider):
         import anthropic
         self.client = anthropic.Anthropic(api_key=settings.ANTHROPIC_API_KEY)
         self.model = settings.LLM_MODEL_CLAUDE
+        self.last_usage: dict | None = None
 
     def analyze_batch(self, people_text: str) -> str:
         resp = self.client.messages.create(
@@ -176,6 +177,11 @@ class ClaudeProvider(BaseLLMProvider):
             system=EXPERTISE_SYSTEM_PROMPT,
             messages=[{"role": "user", "content": people_text}],
         )
+        self.last_usage = {
+            "input_tokens": resp.usage.input_tokens,
+            "output_tokens": resp.usage.output_tokens,
+            "model": self.model,
+        }
         return resp.content[0].text
 
 
@@ -184,6 +190,7 @@ class OpenAIProvider(BaseLLMProvider):
         from openai import OpenAI
         self.client = OpenAI(api_key=settings.OPENAI_API_KEY)
         self.model = settings.LLM_MODEL_OPENAI
+        self.last_usage: dict | None = None
 
     def analyze_batch(self, people_text: str) -> str:
         resp = self.client.chat.completions.create(
@@ -195,6 +202,12 @@ class OpenAIProvider(BaseLLMProvider):
             max_tokens=16384,
             temperature=0,
         )
+        if resp.usage:
+            self.last_usage = {
+                "input_tokens": resp.usage.prompt_tokens,
+                "output_tokens": resp.usage.completion_tokens,
+                "model": self.model,
+            }
         return resp.choices[0].message.content
 
 
@@ -203,6 +216,7 @@ class GeminiProvider(BaseLLMProvider):
         from google import genai
         self.client = genai.Client(api_key=settings.GOOGLE_API_KEY)
         self.model = settings.LLM_MODEL_GEMINI
+        self.last_usage: dict | None = None
 
     def analyze_batch(self, people_text: str) -> str:
         resp = self.client.models.generate_content(
@@ -213,7 +227,73 @@ class GeminiProvider(BaseLLMProvider):
                 "max_output_tokens": 65536,
             },
         )
+        if resp.usage_metadata:
+            self.last_usage = {
+                "input_tokens": resp.usage_metadata.prompt_token_count,
+                "output_tokens": resp.usage_metadata.candidates_token_count,
+                "model": self.model,
+            }
         return resp.text
+
+
+class DeepSeekProvider(BaseLLMProvider):
+    """DeepSeek uses an OpenAI-compatible API (max_tokens capped at 8192)."""
+    def __init__(self):
+        from openai import OpenAI
+        self.client = OpenAI(
+            api_key=settings.DEEPSEEK_API_KEY,
+            base_url="https://api.deepseek.com",
+        )
+        self.model = settings.LLM_MODEL_DEEPSEEK
+        self.last_usage: dict | None = None
+
+    def analyze_batch(self, people_text: str) -> str:
+        resp = self.client.chat.completions.create(
+            model=self.model,
+            messages=[
+                {"role": "system", "content": EXPERTISE_SYSTEM_PROMPT},
+                {"role": "user", "content": people_text},
+            ],
+            max_tokens=8192,
+            temperature=0,
+        )
+        if resp.usage:
+            self.last_usage = {
+                "input_tokens": resp.usage.prompt_tokens,
+                "output_tokens": resp.usage.completion_tokens,
+                "model": self.model,
+            }
+        return resp.choices[0].message.content
+
+
+class ManusProvider(BaseLLMProvider):
+    """Manus uses an OpenAI-compatible API."""
+    def __init__(self):
+        from openai import OpenAI
+        self.client = OpenAI(
+            api_key=settings.MANUS_API_KEY,
+            base_url="https://api.manus.im/v1",
+        )
+        self.model = settings.LLM_MODEL_MANUS
+        self.last_usage: dict | None = None
+
+    def analyze_batch(self, people_text: str) -> str:
+        resp = self.client.chat.completions.create(
+            model=self.model,
+            messages=[
+                {"role": "system", "content": EXPERTISE_SYSTEM_PROMPT},
+                {"role": "user", "content": people_text},
+            ],
+            max_tokens=16384,
+            temperature=0,
+        )
+        if resp.usage:
+            self.last_usage = {
+                "input_tokens": resp.usage.prompt_tokens,
+                "output_tokens": resp.usage.completion_tokens,
+                "model": self.model,
+            }
+        return resp.choices[0].message.content
 
 
 def get_provider() -> BaseLLMProvider:
@@ -221,6 +301,10 @@ def get_provider() -> BaseLLMProvider:
         return OpenAIProvider()
     if settings.LLM_PROVIDER == "gemini":
         return GeminiProvider()
+    if settings.LLM_PROVIDER == "deepseek":
+        return DeepSeekProvider()
+    if settings.LLM_PROVIDER == "manus":
+        return ManusProvider()
     return ClaudeProvider()
 
 

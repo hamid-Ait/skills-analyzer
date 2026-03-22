@@ -6,14 +6,27 @@ from app.tasks.celery_app import celery_app
 from app.database import SessionLocal
 from app.models import Company, Person
 from app.services.apify_google_search import ApifyLinkedInEmployeesClient
+from app.services.cost_tracker import log_usage, extract_apify_cost
 
 log = logging.getLogger(__name__)
 
 
-def _search_single(client, person_name, company_linkedin_url):
+def _search_single(client, person_name, company_linkedin_url, company_id=None):
     """Search for a single person by name. Returns (name, profile_dict | None)."""
     try:
-        return person_name, client.search_person_by_name(person_name, company_linkedin_url)
+        result, run = client.search_person_by_name(person_name, company_linkedin_url)
+        if run:
+            cost = extract_apify_cost(client.client, run)
+            log_usage(
+                company_id=company_id,
+                service="apify",
+                provider="apify",
+                model=client.ACTOR_ID,
+                pipeline_step="linkedin_resolve",
+                cost_usd=cost,
+                metadata_json={"person_name": person_name},
+            )
+        return person_name, result
     except Exception as exc:
         log.warning(f"Search failed for {person_name}: {exc}")
         return person_name, None
@@ -85,6 +98,17 @@ def resolve_linkedin_urls(self, company_id: str, person_ids: list[str]):
             company_linkedin_url = client._resolve_linkedin_company_url(
                 company_name, company.url
             )
+            # Log Google search cost for company URL resolution
+            if client._last_run:
+                cost = extract_apify_cost(client.client, client._last_run)
+                log_usage(
+                    company_id=company_id,
+                    service="apify",
+                    provider="apify",
+                    model=client.GOOGLE_ACTOR_ID,
+                    pipeline_step="linkedin_resolve",
+                    cost_usd=cost,
+                )
 
         if not company_linkedin_url:
             log.warning(f"Could not find LinkedIn company page for {company_name}")
@@ -98,7 +122,7 @@ def resolve_linkedin_urls(self, company_id: str, person_ids: list[str]):
         with ThreadPoolExecutor(max_workers=4) as executor:
             futures = {
                 executor.submit(
-                    _search_single, client, p.name, company_linkedin_url
+                    _search_single, client, p.name, company_linkedin_url, company_id
                 ): p
                 for p in people
             }

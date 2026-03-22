@@ -5,6 +5,7 @@ from app.tasks.celery_app import celery_app
 from app.database import SessionLocal
 from app.models import Company, Person
 from app.services.apify_linkedin import ApifyLinkedInClient
+from app.services.cost_tracker import log_usage, extract_apify_cost
 
 log = logging.getLogger(__name__)
 
@@ -86,6 +87,18 @@ def enrich_linkedin_batch(self, company_id: str, person_ids: list[str],
 
             try:
                 profiles = client.enrich_profiles(batch_urls)
+                # Log Apify cost for this enrichment batch
+                if client._last_run:
+                    cost = extract_apify_cost(client.client, client._last_run)
+                    log_usage(
+                        company_id=company_id,
+                        service="apify",
+                        provider="apify",
+                        model=client.ACTOR_ID,
+                        pipeline_step="enrichment",
+                        cost_usd=cost,
+                        metadata_json={"batch_size": len(batch_urls)},
+                    )
             except Exception as exc:
                 log.warning(f"  Batch {batch_num} failed: {exc} — continuing with next batch")
                 continue

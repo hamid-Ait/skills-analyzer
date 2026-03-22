@@ -14,6 +14,7 @@ class ApifyLinkedInClient:
     def __init__(self, api_token: Optional[str] = None):
         from apify_client import ApifyClient
         self.client = ApifyClient(api_token or settings.APIFY_API_TOKEN)
+        self._last_run: dict | None = None
 
     def enrich_profiles(self, linkedin_urls: list[str]) -> list[dict]:
         """
@@ -31,6 +32,7 @@ class ApifyLinkedInClient:
                 "queries": linkedin_urls,
             }
             run = self.client.actor(self.ACTOR_ID).call(run_input=run_input)
+            self._last_run = run
             dataset = self.client.dataset(run["defaultDatasetId"])
             items = list(dataset.iterate_items())
             log.info(f"Apify returned {len(items)} profiles")

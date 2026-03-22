@@ -159,3 +159,46 @@ export interface GlobalPersonList {
   page: number
   page_size: number
 }
+
+// Cost monitoring types
+
+export interface ServiceCost {
+  service: string
+  cost: number
+}
+
+export interface ProviderCost {
+  provider: string
+  cost: number
+}
+
+export interface CompanyCost {
+  company_id: string
+  company_name: string | null
+  cost: number
+}
+
+export interface StepCost {
+  step: string
+  cost: number
+}
+
+export interface DailyCost {
+  date: string
+  cost: number
+}
+
+export interface TokenTotals {
+  input_tokens: number
+  output_tokens: number
+}
+
+export interface CostSummary {
+  total_cost_usd: number
+  cost_by_service: ServiceCost[]
+  cost_by_provider: ProviderCost[]
+  cost_by_company: CompanyCost[]
+  cost_by_step: StepCost[]
+  cost_over_time: DailyCost[]
+  token_totals: TokenTotals
+}

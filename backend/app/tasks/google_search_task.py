@@ -5,6 +5,7 @@ from app.tasks.celery_app import celery_app
 from app.database import SessionLocal
 from app.models import Company, Person
 from app.services.apify_google_search import ApifyLinkedInEmployeesClient
+from app.services.cost_tracker import log_usage, extract_apify_cost
 
 log = logging.getLogger(__name__)
 
@@ -25,6 +26,18 @@ def search_people_fallback(self, company_id: str, enrich_linkedin: bool = False)
         company_name = company.name or company.url
         client = ApifyLinkedInEmployeesClient()
         profiles = client.search_company_people(company_name, company.url)
+
+        # Log Apify cost for bulk employee fetch
+        if client._last_run:
+            cost = extract_apify_cost(client.client, client._last_run)
+            log_usage(
+                company_id=company_id,
+                service="apify",
+                provider="apify",
+                model=client.ACTOR_ID,
+                pipeline_step="team_discovery",
+                cost_usd=cost,
+            )
 
         if not profiles:
             log.info(f"LinkedIn employees search found no people for company {company_id}")

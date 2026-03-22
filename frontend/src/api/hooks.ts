@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import api from './client'
-import type { JobDetail, CompanyDetail, PersonList, SkillsMatrix, AnalyticsOverview, HeatmapData, GlobalPersonList } from './types'
+import type { JobDetail, CompanyDetail, PersonList, SkillsMatrix, AnalyticsOverview, HeatmapData, GlobalPersonList, CostSummary } from './types'
 
 export function usePollingJob(jobId: string | null, intervalMs = 60000) {
   const [job, setJob] = useState<JobDetail | null>(null)
@@ -154,6 +154,22 @@ export function useGlobalSearch(
       .catch(console.error)
       .finally(() => setLoading(false))
   }, [q, category, sector, geography, page, pageSize])
+
+  return { data, loading }
+}
+
+export function useCostSummary(days = 30) {
+  const [data, setData] = useState<CostSummary | null>(null)
+  const [loading, setLoading] = useState(false)
+
+  useEffect(() => {
+    setLoading(true)
+    api
+      .get<CostSummary>('/costs/summary', { params: { days } })
+      .then(({ data }) => setData(data))
+      .catch(console.error)
+      .finally(() => setLoading(false))
+  }, [days])
 
   return { data, loading }
 }

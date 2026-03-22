@@ -12,7 +12,12 @@ class Settings(BaseSettings):
     LLM_MODEL_CLAUDE: str = "claude-sonnet-4-20250514"
     LLM_MODEL_OPENAI: str = "gpt-4o-mini"
     LLM_MODEL_GEMINI: str = "gemini-2.5-flash"
+    LLM_MODEL_DEEPSEEK: str = "deepseek-chat"
+    DEEPSEEK_API_KEY: str = ""
     GOOGLE_API_KEY: str = ""
+    LLM_PROVIDER_SCRAPING: str = ""    # override for scraping code gen (defaults to LLM_PROVIDER)
+    LLM_MODEL_SCRAPING: str = ""      # override model for scraping (defaults to provider's default)
+    LLM_PROVIDER_DISCOVERY: str = ""  # override for team page discovery (defaults to LLM_PROVIDER_SCRAPING)
     CORS_ORIGINS: str = "http://localhost:5173,http://localhost:3000"
     PROXY_URLS: Optional[str] = None
 

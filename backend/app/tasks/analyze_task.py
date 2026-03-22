@@ -2,6 +2,7 @@ import logging
 from datetime import datetime, timezone
 
 from app.tasks.celery_app import celery_app
+from app.config import settings
 from app.database import SessionLocal
 from app.models import Job, Company, Person
 from app.services.expertise_analyzer import (
@@ -10,6 +11,7 @@ from app.services.expertise_analyzer import (
 )
 from app.services.keyword_matcher import match_person_from_db
 from app.services.expertise_merger import merge, merge_keyword_only
+from app.services.cost_tracker import log_usage
 
 log = logging.getLogger(__name__)
 
@@ -109,6 +111,19 @@ def analyze_expertise_batch(self, company_id: str, person_ids: list[str]):
 
             try:
                 raw_response = provider.analyze_batch(text)
+
+                # Log LLM usage
+                if provider.last_usage:
+                    log_usage(
+                        company_id=company_id,
+                        service="llm",
+                        provider=settings.LLM_PROVIDER,
+                        model=provider.last_usage.get("model"),
+                        pipeline_step="analysis",
+                        input_tokens=provider.last_usage.get("input_tokens"),
+                        output_tokens=provider.last_usage.get("output_tokens"),
+                    )
+
                 results = _parse_llm_response(raw_response)
 
                 # Build name → LLM result mapping for this batch

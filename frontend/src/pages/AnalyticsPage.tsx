@@ -7,12 +7,14 @@ import {
 } from '@mui/material'
 import {
   Business, People, Analytics, LinkedIn, PhotoCamera,
+  AttachMoney, Token,
 } from '@mui/icons-material'
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip,
   ResponsiveContainer, PieChart, Pie, Cell, Legend,
+  LineChart, Line,
 } from 'recharts'
-import { useAnalyticsOverview, useHeatmap } from '../api/hooks'
+import { useAnalyticsOverview, useHeatmap, useCostSummary } from '../api/hooks'
 import type { CompanyStat } from '../api/types'
 
 const COLORS = [
@@ -210,6 +212,137 @@ function HeatmapTab() {
   )
 }
 
+const COST_COLORS = ['#4caf50', '#1976d2', '#ff9800', '#f44336', '#9c27b0', '#00bcd4', '#795548']
+
+function formatUsd(value: number) {
+  if (value >= 1) return `$${value.toFixed(2)}`
+  if (value >= 0.01) return `$${value.toFixed(4)}`
+  return `$${value.toFixed(6)}`
+}
+
+function CostsTab() {
+  const { data, loading } = useCostSummary(30)
+
+  if (loading) return <CircularProgress />
+  if (!data || data.total_cost_usd === 0) {
+    return <Typography color="text.secondary">No cost data available yet. Costs will appear after processing companies.</Typography>
+  }
+
+  const llmCost = data.cost_by_service.find(s => s.service === 'llm')?.cost || 0
+  const apifyCost = data.cost_by_service.find(s => s.service === 'apify')?.cost || 0
+
+  return (
+    <Box>
+      {/* Stat cards */}
+      <Grid container spacing={2} sx={{ mb: 4 }}>
+        <Grid item xs={12} sm={6} md={3}>
+          <StatCard icon={<AttachMoney fontSize="large" />} label="Total Cost (30d)" value={formatUsd(data.total_cost_usd)} color="#4caf50" />
+        </Grid>
+        <Grid item xs={12} sm={6} md={3}>
+          <StatCard icon={<AttachMoney fontSize="large" />} label="LLM Cost" value={formatUsd(llmCost)} color="#1976d2" />
+        </Grid>
+        <Grid item xs={12} sm={6} md={3}>
+          <StatCard icon={<AttachMoney fontSize="large" />} label="Apify Cost" value={formatUsd(apifyCost)} color="#ff9800" />
+        </Grid>
+        <Grid item xs={12} sm={6} md={3}>
+          <StatCard icon={<Token fontSize="large" />} label="Total Tokens" value={(data.token_totals.input_tokens + data.token_totals.output_tokens).toLocaleString()} subtitle={`In: ${data.token_totals.input_tokens.toLocaleString()} / Out: ${data.token_totals.output_tokens.toLocaleString()}`} color="#9c27b0" />
+        </Grid>
+      </Grid>
+
+      <Grid container spacing={3}>
+        {/* Cost by pipeline step */}
+        {data.cost_by_step.length > 0 && (
+          <Grid item xs={12} md={6}>
+            <Typography variant="h6" fontWeight={600} gutterBottom>Cost by Pipeline Step</Typography>
+            <Box sx={{ width: '100%', height: 300 }}>
+              <ResponsiveContainer>
+                <BarChart data={data.cost_by_step} layout="vertical" margin={{ top: 5, right: 30, left: 120, bottom: 5 }}>
+                  <CartesianGrid strokeDasharray="3 3" />
+                  <XAxis type="number" tickFormatter={(v) => `$${v.toFixed(4)}`} />
+                  <YAxis type="category" dataKey="step" width={110} tick={{ fontSize: 12 }} />
+                  <RechartsTooltip formatter={(value: number) => [formatUsd(value), 'Cost']} />
+                  <Bar dataKey="cost" fill="#1976d2" radius={[0, 4, 4, 0]} />
+                </BarChart>
+              </ResponsiveContainer>
+            </Box>
+          </Grid>
+        )}
+
+        {/* Cost by provider (pie) */}
+        {data.cost_by_provider.length > 0 && (
+          <Grid item xs={12} md={6}>
+            <Typography variant="h6" fontWeight={600} gutterBottom>Cost by Provider</Typography>
+            <Box sx={{ width: '100%', height: 300 }}>
+              <ResponsiveContainer>
+                <PieChart>
+                  <Pie
+                    data={data.cost_by_provider}
+                    dataKey="cost"
+                    nameKey="provider"
+                    cx="50%"
+                    cy="50%"
+                    outerRadius={100}
+                    label={({ provider, percent }) => `${provider} (${(percent * 100).toFixed(0)}%)`}
+                  >
+                    {data.cost_by_provider.map((_, index) => (
+                      <Cell key={index} fill={COST_COLORS[index % COST_COLORS.length]} />
+                    ))}
+                  </Pie>
+                  <RechartsTooltip formatter={(value: number) => [formatUsd(value), 'Cost']} />
+                  <Legend />
+                </PieChart>
+              </ResponsiveContainer>
+            </Box>
+          </Grid>
+        )}
+      </Grid>
+
+      {/* Daily cost trend */}
+      {data.cost_over_time.length > 1 && (
+        <Box sx={{ mt: 4 }}>
+          <Typography variant="h6" fontWeight={600} gutterBottom>Daily Cost Trend</Typography>
+          <Box sx={{ width: '100%', height: 300 }}>
+            <ResponsiveContainer>
+              <LineChart data={data.cost_over_time} margin={{ top: 5, right: 30, left: 60, bottom: 5 }}>
+                <CartesianGrid strokeDasharray="3 3" />
+                <XAxis dataKey="date" tick={{ fontSize: 11 }} />
+                <YAxis tickFormatter={(v) => `$${v.toFixed(4)}`} />
+                <RechartsTooltip formatter={(value: number) => [formatUsd(value), 'Cost']} />
+                <Line type="monotone" dataKey="cost" stroke="#1976d2" strokeWidth={2} dot={{ r: 4 }} />
+              </LineChart>
+            </ResponsiveContainer>
+          </Box>
+        </Box>
+      )}
+
+      {/* Cost per company table */}
+      {data.cost_by_company.length > 0 && (
+        <Box sx={{ mt: 4 }}>
+          <Typography variant="h6" fontWeight={600} gutterBottom>Cost by Company</Typography>
+          <TableContainer component={Paper} elevation={1}>
+            <Table size="small">
+              <TableHead>
+                <TableRow>
+                  <TableCell><strong>Company</strong></TableCell>
+                  <TableCell align="right"><strong>Cost (USD)</strong></TableCell>
+                </TableRow>
+              </TableHead>
+              <TableBody>
+                {data.cost_by_company.map((c) => (
+                  <TableRow key={c.company_id}>
+                    <TableCell>{c.company_name || c.company_id}</TableCell>
+                    <TableCell align="right">{formatUsd(c.cost)}</TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </TableContainer>
+        </Box>
+      )}
+    </Box>
+  )
+}
+
 export default function AnalyticsPage() {
   const { data, loading } = useAnalyticsOverview()
   const [tab, setTab] = useState(0)
@@ -265,6 +398,7 @@ export default function AnalyticsPage() {
         <Tab label="Data Completeness" />
         <Tab label="Expertise Heatmap" />
         <Tab label="Charts" />
+        <Tab label="Costs" />
       </Tabs>
 
       {/* Tab 0: Data Completeness */}
@@ -365,6 +499,14 @@ export default function AnalyticsPage() {
               </Grid>
             )}
           </Grid>
+        </Box>
+      )}
+
+      {/* Tab 3: Costs */}
+      {tab === 3 && (
+        <Box>
+          <Typography variant="h6" fontWeight={600} mb={2}>Cost Monitoring (Last 30 Days)</Typography>
+          <CostsTab />
         </Box>
       )}
     </Box>
