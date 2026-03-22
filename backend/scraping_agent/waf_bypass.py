@@ -341,9 +341,11 @@ class WafSession:
         if self._html_cache and self._html_cache[0] == url:
             html, self._html_cache = self._html_cache[1], None
             self.last_waf_info = WafInfo(status=200, bypassed=True)
+            self.last_final_url = url
             return html
 
         self.last_waf_info = WafInfo()
+        self.last_final_url = url  # default; updated after successful fetch
         domain = urlparse(url).netloc
         resp = None
 
@@ -393,6 +395,10 @@ class WafSession:
                 # Activate proxies on first WAF detection
                 self._proxies.activate()
 
+            # Track final URL after redirects
+            if hasattr(resp, 'url') and resp.url:
+                self.last_final_url = resp.url
+
             # Happy path – Web Unlocker already solved any challenge
             if resp.status_code == 200 and (self._web_unlocker or not waf.challenge):
                 waf.bypassed = True
@@ -436,7 +442,9 @@ class WafSession:
     def get(self, url: str, **kwargs) -> "_MockResponse":
         """requests.Session-compatible shim so generated scripts need no changes."""
         html = self.fetch(url, **kwargs)
-        return _MockResponse(html, 200, self._session.cookies, {})
+        mock = _MockResponse(html, 200, self._session.cookies, {})
+        mock.url = self.last_final_url or url
+        return mock
 
     # ── Internals ──────────────────────────────────────────────────────────
     def _rotate_identity(self):

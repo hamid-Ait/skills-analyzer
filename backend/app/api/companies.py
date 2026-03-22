@@ -299,3 +299,53 @@ def retry_company(company_id: UUID, body: RetryRequest, db: Session = Depends(ge
 
     else:
         raise HTTPException(status_code=400, detail=f"Unknown mode: {body.mode}")
+
+
+@router.post("/companies/backfill-sectors", response_model=RetryResponse)
+def backfill_sectors(db: Session = Depends(get_db)):
+    """Re-analyze all people who have been analyzed but have an empty sector field."""
+    people = db.query(Person).filter(
+        Person.primary_expertise.isnot(None),
+        (Person.sector.is_(None)) | (Person.sector == ""),
+    ).all()
+
+    if not people:
+        return RetryResponse(status="ok", message="No people with missing sectors found")
+
+    # Group by company
+    by_company: dict[str, list[str]] = {}
+    for p in people:
+        cid = str(p.company_id)
+        by_company.setdefault(cid, []).append(str(p.id))
+
+    # Clear expertise for affected people so the analyzer re-processes them
+    affected_ids = [p.id for p in people]
+    db.execute(
+        text("""
+            UPDATE people SET
+                primary_expertise = NULL, justification = NULL,
+                matched_13_categories = NULL, sector = NULL,
+                geography = NULL, inferred_expertise_functional = NULL,
+                matched_inferred_expertise_topics = NULL, expertise_raw = NULL
+            WHERE id = ANY(:ids)
+        """),
+        {"ids": affected_ids},
+    )
+    db.commit()
+
+    # Dispatch analysis per company
+    from app.tasks.analyze_task import analyze_expertise_batch
+    for cid, pids in by_company.items():
+        company = db.query(Company).filter(Company.id == cid).first()
+        if company and company.status not in {"pending", "discovering", "scraping", "searching", "resolving", "enriching", "analyzing"}:
+            company.status = "analyzing"
+            company.updated_at = datetime.now(timezone.utc)
+            db.commit()
+        analyze_expertise_batch.delay(cid, pids)
+
+    total = len(affected_ids)
+    companies = len(by_company)
+    return RetryResponse(
+        status="ok",
+        message=f"Re-analyzing {total} people across {companies} companies",
+    )

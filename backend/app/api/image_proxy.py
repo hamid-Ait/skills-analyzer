@@ -13,8 +13,8 @@ MAX_CACHE = 2000
 @router.get("/image-proxy")
 async def proxy_image(url: str = Query(..., description="Image URL to proxy")):
     """Proxy external images (e.g. LinkedIn CDN) to avoid CORS/referrer issues."""
-    if not url.startswith("https://media.licdn.com/"):
-        raise HTTPException(status_code=400, detail="Only LinkedIn CDN URLs are supported")
+    if not url.startswith("https://"):
+        raise HTTPException(status_code=400, detail="Only HTTPS URLs are supported")
 
     cache_key = hashlib.md5(url.encode()).hexdigest()
     if cache_key in _cache:

@@ -93,15 +93,29 @@ def merge(keyword_result: KeywordResult, llm_result: dict) -> dict:
     # ── justification ────────────────────────────────────────────────────
     justification = llm_result.get("justification") or ""
 
-    # ── sectors (free-form from LLM) ─────────────────────────────────────
-    sectors = llm_result.get("sectors") or llm_result.get("sector") or []
-    if isinstance(sectors, str):
-        sectors = [s.strip() for s in sectors.split(";") if s.strip()]
+    # ── sectors (merge keyword + LLM) ────────────────────────────────────
+    llm_sectors = llm_result.get("sectors") or llm_result.get("sector") or []
+    if isinstance(llm_sectors, str):
+        llm_sectors = [s.strip() for s in llm_sectors.split(";") if s.strip()]
+    kw_sectors = keyword_result.sectors or []
+    seen_sectors = {s.lower() for s in llm_sectors}
+    sectors = list(llm_sectors)
+    for s in kw_sectors:
+        if s.lower() not in seen_sectors:
+            sectors.append(s)
+            seen_sectors.add(s.lower())
 
-    # ── geographies (free-form from LLM) ─────────────────────────────────
-    geographies = llm_result.get("geographies") or llm_result.get("geography") or []
-    if isinstance(geographies, str):
-        geographies = [s.strip() for s in geographies.split(";") if s.strip()]
+    # ── geographies (merge keyword + LLM) ────────────────────────────────
+    llm_geo = llm_result.get("geographies") or llm_result.get("geography") or []
+    if isinstance(llm_geo, str):
+        llm_geo = [s.strip() for s in llm_geo.split(";") if s.strip()]
+    kw_geo = keyword_result.geography or []
+    seen_geo = {g.lower() for g in llm_geo}
+    geographies = list(llm_geo)
+    for g in kw_geo:
+        if g.lower() not in seen_geo:
+            geographies.append(g)
+            seen_geo.add(g.lower())
 
     # ── inferred_expertise_functional (free-form from LLM) ───────────────
     func = llm_result.get("inferred_expertise_functional") or []

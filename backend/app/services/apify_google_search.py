@@ -17,6 +17,7 @@ class ApifyLinkedInEmployeesClient:
     def __init__(self, api_token: Optional[str] = None):
         from apify_client import ApifyClient
         self.client = ApifyClient(api_token or settings.APIFY_API_TOKEN)
+        self._last_run: dict | None = None
 
     def _resolve_linkedin_company_url(self, company_name: str, company_url: str) -> Optional[str]:
         """
@@ -38,6 +39,7 @@ class ApifyLinkedInEmployeesClient:
                 "mobileResults": False,
             }
             run = self.client.actor(self.GOOGLE_ACTOR_ID).call(run_input=run_input)
+            self._last_run = run
             dataset = self.client.dataset(run["defaultDatasetId"])
 
             for item in dataset.iterate_items():
@@ -82,6 +84,7 @@ class ApifyLinkedInEmployeesClient:
                 "maxItems": max_results,
             }
             run = self.client.actor(self.ACTOR_ID).call(run_input=run_input)
+            self._last_run = run
             dataset = self.client.dataset(run["defaultDatasetId"])
             items = list(dataset.iterate_items())
 
@@ -98,10 +101,11 @@ class ApifyLinkedInEmployeesClient:
             log.error(f"Apify LinkedIn employees search failed for {company_name}: {exc}")
             return []
 
-    def search_person_by_name(self, person_name: str, company_linkedin_url: str) -> Optional[dict]:
+    def search_person_by_name(self, person_name: str, company_linkedin_url: str) -> tuple[Optional[dict], dict]:
         """
         Search for a specific person by name within a company's LinkedIn employees.
         Uses the searchQuery parameter for targeted lookup — returns at most 1 result.
+        Returns (profile_dict | None, run_metadata).
         """
         run_input = {
             "companies": [company_linkedin_url],
@@ -109,8 +113,10 @@ class ApifyLinkedInEmployeesClient:
             "searchQuery": person_name,
         }
         run = self.client.actor(self.ACTOR_ID).call(run_input=run_input)
+        self._last_run = run
         items = list(self.client.dataset(run["defaultDatasetId"]).iterate_items())
-        return self._parse_employee(items[0]) if items else None
+        profile = self._parse_employee(items[0]) if items else None
+        return profile, run
 
     @staticmethod
     def _parse_employee(item: dict) -> Optional[dict]:

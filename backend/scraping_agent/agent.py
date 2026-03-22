@@ -33,7 +33,6 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urljoin, urlparse, parse_qs, urlencode, urlunparse, quote
 
-import anthropic
 import requests
 
 from waf_bypass import WafSession, WafInfo
@@ -64,6 +63,96 @@ SCRIPTS_DIR    = Path("../../generated_scripts")
 HTML_DIR       = Path("../../html")
 PROGRESS_DIR   = Path("../../progress")
 DEBUG_MODE     = False  # set to True via --debug flag
+
+# ---------------------------------------------------------------------------
+# LLM Client abstraction — supports multiple providers
+# ---------------------------------------------------------------------------
+class LLMClient:
+    """Unified LLM interface for scraping/discovery. Wraps Anthropic, OpenAI,
+    Gemini, and DeepSeek behind a single `.create()` method."""
+
+    def __init__(self, provider: str = "claude", api_key: str | None = None,
+                 model: str | None = None):
+        self.provider = provider
+        self._model = model or MODEL
+        if provider == "claude":
+            import anthropic
+            self._client = anthropic.Anthropic(api_key=api_key or os.environ.get("ANTHROPIC_API_KEY", ""))
+        elif provider == "openai":
+            from openai import OpenAI
+            self._client = OpenAI(api_key=api_key or os.environ.get("OPENAI_API_KEY", ""))
+            self._model = model or "gpt-4o-mini"
+        elif provider == "deepseek":
+            from openai import OpenAI
+            self._client = OpenAI(
+                api_key=api_key or os.environ.get("DEEPSEEK_API_KEY", ""),
+                base_url="https://api.deepseek.com",
+            )
+            self._model = model or "deepseek-chat"
+        elif provider == "gemini":
+            from google import genai
+            self._genai_client = genai.Client(api_key=api_key or os.environ.get("GOOGLE_API_KEY", ""))
+            self._model = model or "gemini-2.5-flash"
+        else:
+            raise ValueError(f"Unknown LLM provider: {provider}")
+
+    @property
+    def model_name(self) -> str:
+        return self._model
+
+    def create(self, system: str, messages: list[dict], max_tokens: int = 8192) -> tuple[str, dict]:
+        """Call the LLM. Returns (response_text, usage_dict).
+        usage_dict has keys: model, input_tokens, output_tokens."""
+        if self.provider == "claude":
+            resp = self._client.messages.create(
+                model=self._model,
+                max_tokens=max_tokens,
+                system=system,
+                messages=messages,
+            )
+            usage = {
+                "model": self._model,
+                "input_tokens": resp.usage.input_tokens,
+                "output_tokens": resp.usage.output_tokens,
+            }
+            return resp.content[0].text, usage
+
+        elif self.provider in ("openai", "deepseek"):
+            oai_messages = [{"role": "system", "content": system}] + messages
+            resp = self._client.chat.completions.create(
+                model=self._model,
+                messages=oai_messages,
+                max_tokens=max_tokens,
+                temperature=0,
+            )
+            usage = {
+                "model": self._model,
+                "input_tokens": resp.usage.prompt_tokens if resp.usage else 0,
+                "output_tokens": resp.usage.completion_tokens if resp.usage else 0,
+            }
+            return resp.choices[0].message.content, usage
+
+        elif self.provider == "gemini":
+            from google.genai import types
+            resp = self._genai_client.models.generate_content(
+                model=self._model,
+                contents=messages[0]["content"],
+                config=types.GenerateContentConfig(
+                    system_instruction=system,
+                    max_output_tokens=max_tokens,
+                    temperature=0,
+                ),
+            )
+            usage = {
+                "model": self._model,
+                "input_tokens": getattr(resp.usage_metadata, "prompt_token_count", 0),
+                "output_tokens": getattr(resp.usage_metadata, "candidates_token_count", 0),
+            }
+            return resp.text, usage
+
+
+# Accumulated LLM usage entries for cost tracking (drained by scrape_task.py)
+_usage_log: list[dict] = []
 
 OUTPUT_DIR.mkdir(exist_ok=True)
 SCRIPTS_DIR.mkdir(exist_ok=True)
@@ -155,18 +244,24 @@ def _html_save_path(url: str) -> Path:
     return HTML_DIR / domain / f"{slug}.html"
 
 
-def fetch_html(url: str, session: WafSession) -> str:
+def fetch_html(url: str, session: WafSession) -> tuple[str, str]:
+    """Fetch HTML and return (html, final_url) — final_url may differ from
+    the requested url if the server issued a redirect."""
     log.info(f"  GET {url}")
     resp = session.get(url)
     resp.raise_for_status()
     html = resp.text
+    final_url = getattr(session, 'last_final_url', url) or url
+
+    if final_url != url:
+        log.info(f"  REDIRECTED {url} -> {final_url}")
 
     if DEBUG_MODE:
-        save_path = _html_save_path(url)
+        save_path = _html_save_path(final_url)
         save_path.parent.mkdir(parents=True, exist_ok=True)
         save_path.write_text(html, encoding="utf-8")
         log.info(f"  HTML saved -> {save_path}")
-    return html
+    return html, final_url
 
 
 def _collapse_repeated_groups(soup, keep: int = 3) -> int:
@@ -216,8 +311,64 @@ def _collapse_repeated_groups(soup, keep: int = 3) -> int:
     return total_removed
 
 
+def _extract_embedded_json(html: str) -> str | None:
+    """Extract people data from embedded JSON in framework script tags.
+
+    Many modern sites (Nuxt, Next.js) render only the active tab in the DOM
+    but embed ALL data in a <script> tag.  We extract the JSON and pass it
+    alongside the HTML so the LLM can use it.
+    """
+    from bs4 import BeautifulSoup as _BS
+
+    soup = _BS(html, "lxml")
+
+    # Look for common framework data script tags
+    candidates = []
+    for script in soup.find_all("script"):
+        sid = script.get("id", "")
+        stype = script.get("type", "")
+        text = script.string or ""
+
+        # Match known framework patterns
+        if sid in ("__NUXT_DATA__", "__NEXT_DATA__") and text:
+            candidates.append(text)
+        elif stype == "application/json" and len(text) > 500:
+            candidates.append(text)
+
+    if not candidates:
+        # Try inline assignment: window.__NUXT__ = {...}
+        import re as _re
+        m = _re.search(r"window\.__NUXT__\s*=\s*(\{.+?\});\s*</script>", html, _re.DOTALL)
+        if m:
+            candidates.append(m.group(1))
+
+    # Pick the candidate with the most people-like signals
+    best, best_score = None, 0
+    for raw in candidates:
+        people_signals = ("name", "firstName", "lastName", "people", "team",
+                          "role", "position", "title")
+        score = sum(raw.count(f'"{s}"') for s in people_signals)
+        if score > best_score:
+            best, best_score = raw, score
+
+    if not best or best_score < 3:
+        return None
+
+    # Budget: keep enough for the LLM to see the full data structure.
+    # The DOM HTML will be reduced when embedded data is present.
+    max_json = 30_000
+    if len(best) > max_json:
+        best = best[:max_json] + "\n... [truncated]"
+
+    return best
+
+
 def simplify_html(html: str, max_chars: int = MAX_HTML_CHARS) -> str:
     from bs4 import BeautifulSoup
+
+    # Extract embedded JSON data before stripping scripts
+    embedded_json = _extract_embedded_json(html)
+
     soup = BeautifulSoup(html, "lxml")
 
     # Remove purely decorative / non-content tags (keep <img> for photo extraction)
@@ -279,6 +430,26 @@ def simplify_html(html: str, max_chars: int = MAX_HTML_CHARS) -> str:
         log.info(f"  HTML: collapsed {removed} repeated elements (kept 3 each)")
 
     clean = soup.prettify()
+
+    # Append embedded JSON data (Nuxt/Next.js) so the LLM can extract from
+    # all tabs/sections, not just the server-rendered active tab.
+    if embedded_json:
+        json_section = (
+            "\n\n<!-- EMBEDDED PAGE DATA (from __NUXT_DATA__ / __NEXT_DATA__) —\n"
+            "     This JSON contains ALL people across ALL tabs/sections.\n"
+            "     The DOM above may only show the active tab. Use this data as primary source. -->\n"
+            "<script type=\"application/json\" id=\"__PAGE_DATA__\">\n"
+            f"{embedded_json}\n"
+            "</script>\n"
+        )
+        # Reduce DOM budget to make room for the JSON data
+        dom_budget = max_chars - len(json_section)
+        if len(clean) > dom_budget:
+            log.info(f"  HTML: trimming DOM from {len(clean):,} to {dom_budget:,} chars to fit embedded JSON")
+            clean = clean[:dom_budget]
+        clean += json_section
+        log.info(f"  HTML: appended {len(embedded_json):,} chars of embedded JSON data")
+
     orig_len = len(clean)
     if len(clean) > max_chars:
         log.warning(f"  HTML truncated {orig_len:,} -> {max_chars:,} chars")
@@ -404,12 +575,61 @@ Given a URL and a cleaned HTML snippet you will:
 
    Always check ALL THREE patterns before returning an empty bio.
 
+   TABBED / SECTIONED TEAM PAGES & EMBEDDED JSON DATA
+   Some team pages split people across client-side tabs (e.g. "Partners",
+   "Senior Advisers", "Senior Team").  The server-rendered HTML may only
+   contain the ACTIVE tab's people — the other tabs are populated by JS.
+
+   If the HTML snippet includes an EMBEDDED PAGE DATA section at the bottom
+   (inside a <script> tag), it contains embedded JSON from the page's JS
+   framework.  This JSON has ALL people across ALL tabs.  When you see this:
+
+   IMPORTANT — your scrape_page function must look for the embedded data
+   in the REAL page HTML using these IDs (try each):
+     soup.find("script", id="__NUXT_DATA__")   ← Nuxt 3
+     soup.find("script", id="__NEXT_DATA__")   ← Next.js
+   Then json.loads() its text content.
+
+   The embedded data may use a flat indexed-array format (Nuxt 3):
+     [["ShallowReactive",1],{"data":2,...},...]
+   where dict values are indices into the top-level array.  To resolve:
+     def resolve(data, idx, depth=0):
+         if depth > 15 or not isinstance(idx, int) or idx >= len(data):
+             return idx
+         val = data[idx]
+         if isinstance(val, (str, int, float, bool)) or val is None:
+             return val
+         if isinstance(val, list):
+             return [resolve(data, i, depth+1) for i in val]
+         if isinstance(val, dict):
+             return {k: resolve(data, v, depth+1) for k, v in val.items()}
+         return val
+
+   Look for objects with "people" or "team" keys — those are tab groups.
+   Each group has a "title" and a "people" array of person indices.
+   Resolve each person to get "name", "role", "image", "link", etc.
+
+   Extract people from ALL groups/tabs — not just the first one.
+
+   If no embedded JSON is found, fall back to DOM parsing:
+   - Use soup.find_all() to select ALL person cards across the ENTIRE page
+   - Do NOT scope selectors to a single tab container
+   - Do NOT filter by "active", "show", "is-active", or "display:none"
+
 3. Detect pagination using ONE strategy:
    - "none"         -- single page / all people on one page
    - "query_param"  -- ?page=2, ?p=3, ?start=20, ?offset=40
-   - "path_segment" -- /team/page/2
+   - "path_segment" -- /team/page/2 or /team/start/24
    - "next_link"    -- <a rel="next"> or visible "Next" / "Load more" anchor
    - "cursor"       -- ?cursor=<token> from page body
+
+   For "path_segment": set param_name to the path segment label (e.g. "page",
+   "start", "offset"). param_step is the increment per page, param_start is the
+   value for the SECOND page (since the first page is the base URL without the
+   segment).
+   Examples:
+     /team → /team/page/2 → /team/page/3: param_name="page", param_step=1, param_start=2
+     /team → /team/start/24 → /team/start/48: param_name="start", param_step=24, param_start=24
 
 4. Write a complete, self-contained Python scraping function:
    - Named exactly: scrape_page(url: str, session) -> list[dict]
@@ -692,7 +912,7 @@ If no such page is found return:
 """
 
 
-def call_llm(client: anthropic.Anthropic, url: str, html: str,
+def call_llm(client: LLMClient, url: str, html: str,
              repair: bool = False, profile_page: bool = False,
              profile_function: bool = False) -> str:
     if repair:
@@ -704,14 +924,14 @@ def call_llm(client: anthropic.Anthropic, url: str, html: str,
     else:
         system = SYSTEM_PROMPT
     label = "[REPAIR] " if repair else ("[PROFILE-FN] " if profile_function else ("[PROFILE] " if profile_page else ""))
-    log.info(f"  {label}Calling LLM ...")
-    resp = client.messages.create(
-        model=MODEL,
-        max_tokens=8192,
+    log.info(f"  {label}Calling LLM ({client.provider}/{client.model_name}) ...")
+    text, usage = client.create(
         system=system,
         messages=[{"role": "user", "content": f"URL: {url}\n\nHTML SNIPPET:\n{html}"}],
+        max_tokens=8192,
     )
-    return resp.content[0].text
+    _usage_log.append({**usage, "step": "scraping"})
+    return text
 
 
 # ---------------------------------------------------------------------------
@@ -901,7 +1121,7 @@ def discover_team_url_local(base_url: str, html: str) -> str | None:
     return None
 
 
-def discover_team_url(client: anthropic.Anthropic, base_url: str,
+def discover_team_url(client: LLMClient, base_url: str,
                       session: WafSession) -> str | None:
     """
     Find the team/people page URL from a homepage.
@@ -915,10 +1135,15 @@ def discover_team_url(client: anthropic.Anthropic, base_url: str,
     """
     log.info(f"  [DISCOVER] Looking for team page on {base_url}")
     try:
-        html = fetch_html(base_url, session)
+        html, final_url = fetch_html(base_url, session)
     except Exception as exc:
         log.warning(f"  [DISCOVER] Could not fetch {base_url}: {exc}")
         return None
+
+    # If we were redirected to a different domain, use the final URL as base
+    if final_url != base_url:
+        log.info(f"  [DISCOVER] Redirected to {final_url}, using as base")
+        base_url = final_url
 
     # Tier 1 — heuristic (no LLM)
     url = discover_team_url_local(base_url, html)
@@ -926,15 +1151,15 @@ def discover_team_url(client: anthropic.Anthropic, base_url: str,
         return url
 
     # Tier 2 — LLM fallback (reuses already-fetched html, no re-fetch)
-    log.info("  [DISCOVER] Falling back to LLM ...")
+    log.info(f"  [DISCOVER] Falling back to LLM ({client.provider}/{client.model_name}) ...")
     clean = simplify_html(html, max_chars=20_000)
-    resp = client.messages.create(
-        model=MODEL,
-        max_tokens=512,
+    raw_text, usage = client.create(
         system=DISCOVER_PROMPT,
         messages=[{"role": "user", "content": f"Base URL: {base_url}\n\nHTML:\n{clean}"}],
+        max_tokens=512,
     )
-    raw = resp.content[0].text.strip()
+    _usage_log.append({**usage, "step": "team_discovery"})
+    raw = raw_text.strip()
     raw = re.sub(r"^```json\s*|```$", "", raw, flags=re.MULTILINE).strip()
     try:
         result = json.loads(raw)
@@ -1184,7 +1409,7 @@ def normalise_people(records: list[dict], source_url: str) -> list[dict]:
 def enrich_from_profile_pages(
     people:       list[dict],
     scraper:      "ScraperModule",
-    client:       anthropic.Anthropic,
+    client:       LLMClient,
     session:      WafSession,
     script_path:  Path,
     max_profiles: int = 10000,
@@ -1267,7 +1492,7 @@ def enrich_from_profile_pages(
             if not detail and not _regen_done:
                 _regen_done = True
                 log.warning("  [PROFILE] Script returned empty — calling LLM to (re)generate profile function ...")
-                html        = fetch_html(purl, session)
+                html, _     = fetch_html(purl, session)
                 clean       = simplify_html(html)
                 fn_txt      = call_llm(client, purl, clean, profile_function=True)
                 fn_code, _  = parse_llm_response(fn_txt)
@@ -1406,13 +1631,27 @@ class PaginationEngine:
         step    = self.info.param_step  or 1
         current = self.info.param_start if self.info.param_start is not None else 1
         total_p = self.info.total_pages or 0
+        param   = self.info.param_name or ""
         seen: set[str] = set()
+
+        # When param_name is set (e.g. "start"), the base URL is page 1
+        # (no path segment), and param_start is the value for page 2.
+        # Yield the base URL first, then start generating segment URLs.
+        if param:
+            base = self.start_url.rstrip("/") + "/"
+            if base not in seen:
+                seen.add(base)
+                yield self.start_url
+                if total_p and total_p <= 1:
+                    return
+
         for n in range(MAX_PAGES):
-            url = self._set_path(self.start_url, current)
+            url = self._set_path(self.start_url, current, param)
             if url in seen: return
             seen.add(url)
             yield url
-            if total_p and (n + 1) >= total_p: return
+            pages_so_far = n + 1 + (1 if param else 0)
+            if total_p and pages_so_far >= total_p: return
             current += step
 
     # ── Prefetch-based iteration ───────────────────────────────────────
@@ -1428,7 +1667,7 @@ class PaginationEngine:
                 for url in url_gen_fn():
                     if self._stop.is_set():
                         return
-                    html = fetch_html(url, self.session)
+                    html, _ = fetch_html(url, self.session)
                     self.session.prime_cache(url, html)
                     # Use timeout so we can check _stop if consumer quit
                     while not self._stop.is_set():
@@ -1455,7 +1694,7 @@ class PaginationEngine:
             t.join(timeout=5)
 
     def _single(self):
-        html = fetch_html(self.start_url, self.session)
+        html, _ = fetch_html(self.start_url, self.session)
         self.session.prime_cache(self.start_url, html)
         yield self.start_url, html
 
@@ -1465,7 +1704,7 @@ class PaginationEngine:
         for _ in range(MAX_PAGES):
             if current in seen: break
             seen.add(current)
-            html = fetch_html(current, self.session)
+            html, _ = fetch_html(current, self.session)
             self.session.prime_cache(current, html)
             yield current, html
             nxt = self._find_next(html, current)
@@ -1482,16 +1721,24 @@ class PaginationEngine:
         return urlunparse(parts._replace(query=urlencode({k: v[0] for k, v in qs.items()})))
 
     @staticmethod
-    def _set_path(url: str, page: int) -> str:
+    def _set_path(url: str, page: int, param_name: str = "") -> str:
         parsed   = urlparse(url)
         trailing = "/" if parsed.path.endswith("/") else ""
         path     = parsed.path.rstrip("/")
-        new_path, n = re.subn(r"/(\d+)$", f"/{page}", path)
-        if not n:
-            if re.search(r"/page/?$", path, re.I):
-                new_path = path.rstrip("/") + f"/{page}"
-            else:
-                new_path = path + f"/{page}"
+
+        if param_name:
+            # Named path segment: /team/start/24 where param_name="start"
+            pattern = rf"/{re.escape(param_name)}/\d+"
+            new_path, n = re.subn(pattern, f"/{param_name}/{page}", path)
+            if not n:
+                new_path = path + f"/{param_name}/{page}"
+        else:
+            new_path, n = re.subn(r"/(\d+)$", f"/{page}", path)
+            if not n:
+                if re.search(r"/page/?$", path, re.I):
+                    new_path = path.rstrip("/") + f"/{page}"
+                else:
+                    new_path = path + f"/{page}"
         return urlunparse(parsed._replace(path=new_path + trailing))
 
     def _find_next(self, html: str, current_url: str) -> str | None:
@@ -1527,7 +1774,7 @@ class PaginationEngine:
 # ---------------------------------------------------------------------------
 def scrape_site(
     url: str,
-    client: anthropic.Anthropic,
+    client: LLMClient,
     session: WafSession,
     follow_profiles: bool = False,
     no_follow_profiles: bool = False,
@@ -1562,7 +1809,10 @@ def scrape_site(
         # ── REUSE PATH — existing script, no resume ──────────────────────
         log.info(f"  [REUSE] Loading existing script from {script_path}")
         code = script_path.read_text(encoding="utf-8")
-        html1 = fetch_html(url, session)  # Still needed for pagination + page data
+        html1, final_url = fetch_html(url, session)  # Still needed for pagination + page data
+        if final_url != url:
+            log.info(f"  [REUSE] Redirected {url} -> {final_url}, updating base URL")
+            url = final_url
 
         # Load pagination metadata from companion file
         if meta_path.exists():
@@ -1592,7 +1842,10 @@ def scrape_site(
             }, ensure_ascii=False, indent=2), encoding="utf-8")
     else:
         # ── FRESH PATH ───────────────────────────────────────────────────
-        html1          = fetch_html(url, session)
+        html1, final_url = fetch_html(url, session)
+        if final_url != url:
+            log.info(f"  [SCRAPE] Redirected {url} -> {final_url}, updating base URL")
+            url = final_url
         clean1         = simplify_html(html1)
         llm_txt        = call_llm(client, url, clean1)
         code, meta_raw = parse_llm_response(llm_txt)
@@ -1622,7 +1875,10 @@ def scrape_site(
         pages_already = resume_state.get("pages_scraped", 0)
         if pinfo.strategy in ("query_param", "path_segment") and pages_already:
             step = pinfo.param_step or 1
-            pinfo.param_start = (pinfo.param_start or 1) + pages_already * step
+            # For named path segments (e.g. /start/24), page 1 is the base URL,
+            # so only (pages_already - 1) segment-pages have been scraped.
+            segment_pages = max(0, pages_already - 1) if pinfo.param_name else pages_already
+            pinfo.param_start = (pinfo.param_start or 1) + segment_pages * step
         elif pinfo.strategy in ("next_link", "cursor"):
             resume_start_url = resume_state.get("last_next_url") or url
 
@@ -1644,10 +1900,14 @@ def scrape_site(
             )
             session.prime_cache(first_paged, html1)
         elif pinfo.strategy == "path_segment":
-            first_paged = PaginationEngine._set_path(
-                url, pinfo.param_start if pinfo.param_start is not None else 1,
-            )
-            session.prime_cache(first_paged, html1)
+            if pinfo.param_name:
+                # Named segment (e.g. /start/24) — page 1 is the base URL
+                session.prime_cache(url, html1)
+            else:
+                first_paged = PaginationEngine._set_path(
+                    url, pinfo.param_start if pinfo.param_start is not None else 1,
+                )
+                session.prime_cache(first_paged, html1)
         elif pinfo.strategy in ("none", "next_link", "cursor"):
             session.prime_cache(url, html1)
 
@@ -1825,7 +2085,7 @@ def scrape_site(
         for retry_url in waf_skipped_pages:
             log.info(f"  [RETRY] {retry_url}")
             try:
-                retry_html = fetch_html(retry_url, session)
+                retry_html, _ = fetch_html(retry_url, session)
                 if len(retry_html) < MIN_PAGE_HTML:
                     log.warning(f"  [RETRY] Still blocked ({len(retry_html)} chars)")
                     continue
@@ -1943,7 +2203,7 @@ def scrape_site(
         if first_purl:
             log.info(f"  [PROFILE-FN] Probing first profile page: {first_purl}")
             try:
-                probe_html  = fetch_html(first_purl, session)
+                probe_html, _  = fetch_html(first_purl, session)
                 probe_clean = simplify_html(probe_html)
                 fn_txt      = call_llm(client, first_purl, probe_clean, profile_function=True)
                 fn_code, _  = parse_llm_response(fn_txt)
@@ -1975,6 +2235,7 @@ def scrape_site(
         "pages_scraped":     total_pages_scraped,
         "total_records":     len(all_records),
         "waf":               session.last_waf_info.to_dict(),
+        "final_url":         url,  # may differ from original if redirected
         "_json_path":        str(json_path_out),
         "_csv_path":         str(csv_path_out),
     }
@@ -2095,7 +2356,8 @@ def run_agent(
     web_unlocker       : if True, proxy is a Bright Data Web Unlocker — skip challenge detection
     resume             : if True, load progress state and resume interrupted runs
     """
-    client  = anthropic.Anthropic(api_key=api_key or os.environ["ANTHROPIC_API_KEY"])
+    llm_provider = os.environ.get("LLM_PROVIDER_SCRAPING", os.environ.get("LLM_PROVIDER", "claude"))
+    client = LLMClient(provider=llm_provider, api_key=api_key)
 
     # CLI --proxies takes precedence; fall back to PROXY_URLS from .env
     if not proxies:
@@ -2216,8 +2478,11 @@ def main():
         description="AI Team/People Scraper Agent v4 — WAF-aware, people-focused"
     )
     ap.add_argument("urls_file",    help="CSV or JSON file with URLs to scrape")
-    ap.add_argument("--api-key",    default=None,   help="Anthropic API key (or ANTHROPIC_API_KEY env var)")
-    ap.add_argument("--model",      default=MODEL,  help=f"Claude model (default: {MODEL})")
+    ap.add_argument("--api-key",    default=None,   help="LLM API key (or set via env var)")
+    ap.add_argument("--model",      default=MODEL,  help=f"LLM model (default: {MODEL})")
+    ap.add_argument("--llm-provider", default=None,
+                    choices=["claude", "openai", "deepseek", "gemini"],
+                    help="LLM provider for scraping/discovery (default: from LLM_PROVIDER_SCRAPING or LLM_PROVIDER env var)")
     ap.add_argument("--max-pages",  type=int,   default=MAX_PAGES,      help="Max pages per site")
     ap.add_argument("--delay",      type=float, default=REQUEST_DELAY,  help="Base delay between requests (s)")
     ap.add_argument("--proxies",    nargs="*",  default=[],
@@ -2243,6 +2508,8 @@ def main():
     DEBUG_MODE = args.debug
 
     MODEL, MAX_PAGES, REQUEST_DELAY = args.model, args.max_pages, args.delay
+    if args.llm_provider:
+        os.environ["LLM_PROVIDER_SCRAPING"] = args.llm_provider
 
     urls = load_urls(args.urls_file)
     if not urls:
