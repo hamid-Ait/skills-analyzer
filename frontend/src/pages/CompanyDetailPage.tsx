@@ -4,8 +4,9 @@ import {
   Box, Typography, Tabs, Tab, Button, CircularProgress, Breadcrumbs, Link,
   ToggleButtonGroup, ToggleButton, TextField, Pagination,
   Menu, MenuItem, ListItemIcon, ListItemText, Snackbar, Alert,
+  Dialog, DialogTitle, DialogContent, DialogActions,
 } from '@mui/material'
-import { ArrowBack, ViewList, ViewModule, Refresh, RestartAlt, Psychology, LinkedIn, AutoFixHigh } from '@mui/icons-material'
+import { ArrowBack, ViewList, ViewModule, Refresh, RestartAlt, Psychology, LinkedIn, AutoFixHigh, Warning, PlayArrow } from '@mui/icons-material'
 import api from '../api/client'
 import StatusChip from '../components/StatusChip'
 import ExportButton from '../components/ExportButton'
@@ -72,9 +73,9 @@ export default function CompanyDetailPage() {
   const [retryAnchor, setRetryAnchor] = useState<null | HTMLElement>(null)
   const [retryLoading, setRetryLoading] = useState(false)
   const [snack, setSnack] = useState<{ msg: string; severity: 'success' | 'error' } | null>(null)
+  const [confirmMode, setConfirmMode] = useState<string | null>(null)
 
-  const handleRetry = async (mode: string) => {
-    setRetryAnchor(null)
+  const doRetry = async (mode: string) => {
     setRetryLoading(true)
     try {
       const { data } = await api.post(`/companies/${companyId}/retry`, { mode })
@@ -83,6 +84,15 @@ export default function CompanyDetailPage() {
       setSnack({ msg: err.response?.data?.detail || 'Retry failed', severity: 'error' })
     } finally {
       setRetryLoading(false)
+    }
+  }
+
+  const handleRetry = (mode: string) => {
+    setRetryAnchor(null)
+    if (mode === 'rescrape') {
+      setConfirmMode(mode)
+    } else {
+      doRetry(mode)
     }
   }
 
@@ -145,9 +155,13 @@ export default function CompanyDetailPage() {
             Retry
           </Button>
           <Menu anchorEl={retryAnchor} open={Boolean(retryAnchor)} onClose={() => setRetryAnchor(null)}>
+            <MenuItem onClick={() => handleRetry('resume')}>
+              <ListItemIcon><PlayArrow fontSize="small" /></ListItemIcon>
+              <ListItemText primary="Resume scraping" secondary="Continue from where it stopped" />
+            </MenuItem>
             <MenuItem onClick={() => handleRetry('rescrape')}>
               <ListItemIcon><RestartAlt fontSize="small" /></ListItemIcon>
-              <ListItemText primary="Re-scrape" secondary="Delete people & start fresh" />
+              <ListItemText primary="Refresh" secondary="Delete people & start fresh" />
             </MenuItem>
             <MenuItem onClick={() => handleRetry('analyze_missing')}>
               <ListItemIcon><AutoFixHigh fontSize="small" /></ListItemIcon>
@@ -203,6 +217,30 @@ export default function CompanyDetailPage() {
           {snack?.msg}
         </Alert>
       </Snackbar>
+
+      {/* Re-scrape confirmation dialog */}
+      <Dialog open={confirmMode === 'rescrape'} onClose={() => setConfirmMode(null)} maxWidth="xs" fullWidth>
+        <DialogTitle sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+          <Warning color="warning" />
+          Refresh {company?.name || 'company'}?
+        </DialogTitle>
+        <DialogContent>
+          <Typography variant="body2" color="text.secondary">
+            This will delete all {company?.people_count || 0} existing people and their
+            expertise analysis, then scrape the company from scratch.
+          </Typography>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setConfirmMode(null)}>Cancel</Button>
+          <Button
+            variant="contained"
+            color="warning"
+            onClick={() => { setConfirmMode(null); doRetry('rescrape') }}
+          >
+            Refresh
+          </Button>
+        </DialogActions>
+      </Dialog>
     </Box>
   )
 }

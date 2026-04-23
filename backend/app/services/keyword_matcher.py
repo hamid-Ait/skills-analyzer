@@ -109,14 +109,13 @@ def match_person(
     )
     m13 = _match_against(text, _EXPERTISE_13)
     functional = _match_against(text, _FUNCTIONAL_KW)
-    sectors = _match_against(text, _SECTOR_KW)
     geography = _match_against(text, _GEOGRAPHY_KW)
     primary = _select_primary(m13)
 
     return KeywordResult(
         matched_13=m13,
         primary_expertise=primary,
-        sectors=sectors,
+        sectors=[],  # Sectors are LLM-only — keyword matching causes too many false positives
         geography=geography,
         functional=functional,
     )

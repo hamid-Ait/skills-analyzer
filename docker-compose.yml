@@ -53,15 +53,10 @@ services:
     command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
     ports:
       - "8000:8000"
+    env_file: .env
     environment:
       DATABASE_URL: postgresql://pi_user:pi_pass@postgres:5432/people_intel
       REDIS_URL: redis://redis:6379/0
-      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
-      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
-      APIFY_API_TOKEN: ${APIFY_API_TOKEN:-}
-      LLM_PROVIDER: ${LLM_PROVIDER:-gemini}
-      GOOGLE_API_KEY: ${GOOGLE_API_KEY:-}
-      PROXY_URLS: ${PROXY_URLS:-}
     volumes:
       - ./backend:/app
     depends_on:
@@ -75,16 +70,10 @@ services:
       context: .
       dockerfile: backend/Dockerfile
     command: celery -A app.tasks.celery_app worker --loglevel=info --concurrency=2
+    env_file: .env
     environment:
       DATABASE_URL: postgresql://pi_user:pi_pass@postgres:5432/people_intel
       REDIS_URL: redis://redis:6379/0
-      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
-      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
-      APIFY_API_TOKEN: ${APIFY_API_TOKEN:-}
-      LLM_PROVIDER: ${LLM_PROVIDER:-gemini}
-      GOOGLE_API_KEY: ${GOOGLE_API_KEY:-}
-      PROXY_URLS: ${PROXY_URLS:-}
-      SCRAPEDO_API_KEY: ${SCRAPEDO_API_KEY:-}
     volumes:
       - ./backend:/app
     depends_on:

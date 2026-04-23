@@ -19,6 +19,7 @@ log = logging.getLogger(__name__)
 
 router = APIRouter()
 
+
 # (db_field, display_header) — order matches desired output
 EXPORT_COLUMNS = [
     ("image_url", "Photo"),
@@ -31,17 +32,20 @@ EXPORT_COLUMNS = [
     ("justification", "Justification (LinkedIn + Bio/Website)"),
     ("matched_13_categories", "Matched 13 Expertise Categories"),
     ("sector", "Sector"),
+    ("_matched_sector", "Matched Sector"),
     ("geography", "Geography"),
     ("inferred_expertise_functional", "Inferred Expertise (Functional)"),
+    ("inference_reasoning", "Inference Reasoning"),
     ("matched_inferred_expertise_topics", "Matched Inferred Expertise (Topics)"),
     ("linkedin_experience_summary", "LinkedIn Experience Summary"),
+    ("bio", "Bio"),
     ("data_source", "Data Source"),
 ]
 
 EXPORT_HEADERS = [h for _, h in EXPORT_COLUMNS]
 
 # Column widths matching reference layout
-COLUMN_WIDTHS = [18, 24, 22, 38, 40, 40, 28, 65, 48, 40, 35, 65, 70, 60, 22]
+COLUMN_WIDTHS = [18, 24, 22, 38, 40, 40, 28, 65, 48, 40, 50, 35, 65, 65, 70, 60, 80, 22]
 
 
 def _people_to_dicts(people, company_name: str = "") -> list[dict]:
@@ -50,7 +54,9 @@ def _people_to_dicts(people, company_name: str = "") -> list[dict]:
         row = {}
         for field, header in EXPORT_COLUMNS:
             if field == "_company_name":
-                val = company_name
+                val = getattr(p, 'department', None) or company_name
+            elif field == "_matched_sector":
+                val = getattr(p, 'matched_sector', None)
             else:
                 val = getattr(p, field, None)
             if isinstance(val, list):

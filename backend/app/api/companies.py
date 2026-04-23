@@ -152,7 +152,7 @@ def get_company(company_id: UUID, db: Session = Depends(get_db)):
 
 
 class RetryRequest(BaseModel):
-    mode: str = "rescrape"  # "rescrape", "reanalyze", "reenrich"
+    mode: str = "rescrape"  # "resume", "rescrape", "reanalyze", "reenrich"
 
 
 class RetryResponse(BaseModel):
@@ -165,6 +165,7 @@ def retry_company(company_id: UUID, body: RetryRequest, db: Session = Depends(ge
     """Retry processing a company.
 
     Modes:
+    - resume: Keep existing people, resume scraping from saved progress
     - rescrape: Delete people, re-scrape from scratch (uses team_url if already discovered)
     - reanalyze: Keep people, re-run LLM expertise analysis
     - reenrich: Keep people, re-run LinkedIn enrichment + analysis
@@ -178,7 +179,28 @@ def retry_company(company_id: UUID, body: RetryRequest, db: Session = Depends(ge
     if company.status in in_progress:
         raise HTTPException(status_code=400, detail=f"Company is already {company.status}")
 
-    if body.mode == "rescrape":
+    if body.mode == "resume":
+        # Keep existing people, resume scraping from saved progress files.
+        # Dedup in scrape_task prevents duplicates; agent resumes from last page.
+        existing_count = db.query(Person).filter(Person.company_id == company_id).count()
+        company.status = "scraping"
+        company.error_message = None
+        company.updated_at = datetime.now(timezone.utc)
+        db.commit()
+
+        from app.tasks.scrape_task import scrape_company
+        scrape_company.delay(
+            str(company_id),
+            discover=company.team_url is None,
+            follow_profiles=True,
+            enrich_linkedin=True,
+        )
+        return RetryResponse(
+            status="ok",
+            message=f"Resuming scrape for {company.name or company.url} ({existing_count} people already saved)",
+        )
+
+    elif body.mode == "rescrape":
         # Delete existing people and start fresh
         db.query(Person).filter(Person.company_id == company_id).delete()
         company.status = "pending"
@@ -212,8 +234,8 @@ def retry_company(company_id: UUID, body: RetryRequest, db: Session = Depends(ge
             text("""
                 UPDATE people SET
                     primary_expertise = NULL, justification = NULL,
-                    matched_13_categories = NULL, sector = NULL,
-                    geography = NULL, inferred_expertise_functional = NULL,
+                    matched_13_categories = NULL, sector = NULL, matched_sector = NULL,
+                    geography = NULL, inferred_expertise_functional = NULL, inference_reasoning = NULL,
                     matched_inferred_expertise_topics = NULL, expertise_raw = NULL
                 WHERE company_id = :cid
             """),
@@ -266,8 +288,8 @@ def retry_company(company_id: UUID, body: RetryRequest, db: Session = Depends(ge
                     linkedin_experience = NULL, linkedin_education = NULL,
                     linkedin_skills = NULL, linkedin_experience_summary = NULL,
                     primary_expertise = NULL, justification = NULL,
-                    matched_13_categories = NULL, sector = NULL,
-                    geography = NULL, inferred_expertise_functional = NULL,
+                    matched_13_categories = NULL, sector = NULL, matched_sector = NULL,
+                    geography = NULL, inferred_expertise_functional = NULL, inference_reasoning = NULL,
                     matched_inferred_expertise_topics = NULL, expertise_raw = NULL
                 WHERE company_id = :cid
             """),
