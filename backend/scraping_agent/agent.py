@@ -141,6 +141,7 @@ class LLMClient:
                     system_instruction=system,
                     max_output_tokens=max_tokens,
                     temperature=0,
+                    automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True),
                 ),
             )
             usage = {
@@ -1981,32 +1982,29 @@ def scrape_site(
                     break
 
                 if consecutive_empty >= repair_threshold:
-                    # If the script has already worked for many pages, empty
-                    # pages likely mean end-of-content, not a broken script.
-                    if len(all_records) > 50:
-                        log.info("  Script has extracted many records — treating empty as end-of-content")
+                    successful_pages = page_num - consecutive_empty - len(waf_skipped_pages)
+                    success_ratio = successful_pages / max(page_num, 1)
+                    if successful_pages > 5 and success_ratio > 0.8:
+                        log.info(
+                            f"  {successful_pages}/{page_num} pages succeeded "
+                            f"({success_ratio:.0%}) — treating empty as end-of-content"
+                        )
                         break
-                    log.info("  Calling LLM for self-repair ...")
-                    original_code = code  # save in case repair breaks things
-                    try:
-                        clean_p  = simplify_html(page_html)
-                        rep_txt  = call_llm(client, page_url, clean_p, repair=True)
-                        new_code, _ = parse_llm_response(rep_txt)
-                        scraper.reload(new_code)
-                        records = scraper.scrape_page(page_url, session)
-                        if records:
-                            code = new_code
-                            script_path.write_text(new_code, encoding="utf-8")
-                            consecutive_empty = 0
-                            log.info(f"  Repair OK: {len(records)} records")
-                        else:
-                            log.warning("  Repair empty — reverting and stopping pagination")
-                            scraper.reload(original_code)
-                            break
-                    except Exception as e:
-                        log.error(f"  Repair failed: {e} — reverting to original script")
-                        scraper.reload(original_code)
+                    # Low success ratio — likely WAF/transient failure, not
+                    # a selector issue.  Skip and keep paginating; resume
+                    # logic handles permanent failures at the task level.
+                    max_consecutive = 5
+                    if consecutive_empty >= max_consecutive:
+                        log.warning(
+                            f"  {consecutive_empty} consecutive empty pages "
+                            f"(success ratio {success_ratio:.0%}) — stopping"
+                        )
                         break
+                    log.info(
+                        f"  Empty page — skipping "
+                        f"({consecutive_empty}/{max_consecutive} before stop)"
+                    )
+                    continue
             else:
                 consecutive_empty = 0
                 log.info(f"  {len(records)} records extracted")

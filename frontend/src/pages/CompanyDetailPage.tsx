@@ -6,7 +6,7 @@ import {
   Menu, MenuItem, ListItemIcon, ListItemText, Snackbar, Alert,
   Dialog, DialogTitle, DialogContent, DialogActions,
 } from '@mui/material'
-import { ArrowBack, ViewList, ViewModule, Refresh, RestartAlt, Psychology, LinkedIn, AutoFixHigh, Warning } from '@mui/icons-material'
+import { ArrowBack, ViewList, ViewModule, Refresh, RestartAlt, Psychology, LinkedIn, AutoFixHigh, Warning, PlayArrow } from '@mui/icons-material'
 import api from '../api/client'
 import StatusChip from '../components/StatusChip'
 import ExportButton from '../components/ExportButton'
@@ -155,6 +155,10 @@ export default function CompanyDetailPage() {
             Retry
           </Button>
           <Menu anchorEl={retryAnchor} open={Boolean(retryAnchor)} onClose={() => setRetryAnchor(null)}>
+            <MenuItem onClick={() => handleRetry('resume')}>
+              <ListItemIcon><PlayArrow fontSize="small" /></ListItemIcon>
+              <ListItemText primary="Resume scraping" secondary="Continue from where it stopped" />
+            </MenuItem>
             <MenuItem onClick={() => handleRetry('rescrape')}>
               <ListItemIcon><RestartAlt fontSize="small" /></ListItemIcon>
               <ListItemText primary="Refresh" secondary="Delete people & start fresh" />

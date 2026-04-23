@@ -1,7 +1,9 @@
 import logging
+import re
 import tempfile
 from pathlib import Path
 from datetime import datetime, timezone
+from urllib.parse import urlparse
 
 from app.tasks.celery_app import celery_app
 from app.config import settings
@@ -18,13 +20,19 @@ def _import_agent():
     from scraping_agent import agent as _agent
 
     work_dir = Path(tempfile.mkdtemp(prefix="pi_agent_"))
+
+    # Stable dirs — must persist across Celery task restarts for resume
+    stable_dir = Path("/tmp/pi_agent_stable")
+    _agent.PROGRESS_DIR = stable_dir / "progress"
+    _agent.SCRIPTS_DIR = stable_dir / "generated_scripts"
+
+    # Ephemeral dirs — per-run artifacts
     _agent.OUTPUT_DIR = work_dir / "scraped_data"
-    _agent.SCRIPTS_DIR = work_dir / "generated_scripts"
-    _agent.PROGRESS_DIR = work_dir / "progress"
     _agent.HTML_DIR = work_dir / "html"
-    _agent.OUTPUT_DIR.mkdir(exist_ok=True)
-    _agent.SCRIPTS_DIR.mkdir(exist_ok=True)
-    _agent.PROGRESS_DIR.mkdir(exist_ok=True)
+
+    for d in [_agent.PROGRESS_DIR, _agent.SCRIPTS_DIR,
+              _agent.OUTPUT_DIR, _agent.HTML_DIR]:
+        d.mkdir(parents=True, exist_ok=True)
 
     return _agent
 
@@ -114,10 +122,17 @@ def scrape_company(self, company_id: str, discover: bool = True,
 
         _update_company(db, company_id, status="scraping")
 
+        # Load resume state if available (slug matches agent.py's formula)
+        slug = re.sub(r"[^\w]", "_", urlparse(team_url).netloc)[:40]
+        resume_state = agent.load_progress(slug)
+        if resume_state:
+            log.info(f"Resuming scrape for {team_url} — {resume_state.get('records_count', 0)} records already saved")
+
         # Scrape
         people_data, meta = agent.scrape_site(
             team_url, client, session,
             follow_profiles=follow_profiles,
+            resume_state=resume_state,
         )
 
         # Drain and log accumulated LLM usage from scraping agent
@@ -140,10 +155,11 @@ def scrape_company(self, company_id: str, discover: bool = True,
             _update_company(db, company_id, team_url=final_url)
 
         # Store results
+        # Store results (people_count updated after insertion to reflect actual inserts)
         _update_company(
             db, company_id,
             status="analyzing",
-            people_count=len(people_data),
+            people_count=len(people_data),  # preliminary; updated below after dedup
             pages_scraped=meta.get("pages_scraped", 0),
             waf_detected=meta.get("waf", {}).get("waf_detected", False),
             waf_name=meta.get("waf", {}).get("waf_name"),
@@ -155,9 +171,29 @@ def scrape_company(self, company_id: str, discover: bool = True,
         image_urls = [p.get("image_url") for p in people_data if p.get("image_url")]
         duplicate_images = {url for url in image_urls if image_urls.count(url) > 1}
 
-        # Bulk insert people
+        # Build dedup set from existing DB records to avoid duplicates on resume
+        existing_people = (
+            db.query(Person.name, Person.title)
+            .filter(Person.company_id == company.id)
+            .all()
+        )
+        existing_keys = {
+            (p.name.strip().lower(), (p.title or "").strip().lower())
+            for p in existing_people
+        }
+
+        # Insert people in batches (partial results survive crashes)
+        INSERT_BATCH = 50
         person_ids = []
+        pending = 0
+        skipped = 0
+
         for p in people_data:
+            dedup_key = (p["name"].strip().lower(), (p.get("title") or "").strip().lower())
+            if dedup_key in existing_keys:
+                skipped += 1
+                continue
+
             person = Person(
                 company_id=company.id,
                 name=p["name"],
@@ -181,9 +217,22 @@ def scrape_company(self, company_id: str, discover: bool = True,
             db.add(person)
             db.flush()
             person_ids.append(str(person.id))
+            existing_keys.add(dedup_key)
+            pending += 1
 
-        db.commit()
+            if pending >= INSERT_BATCH:
+                db.commit()
+                pending = 0
+
+        if pending > 0:
+            db.commit()
+
+        if skipped:
+            log.info(f"Skipped {skipped} duplicate people for company {company_id}")
         log.info(f"Inserted {len(person_ids)} people for company {company_id}")
+
+        # Update people_count to reflect actual inserts (not scraped count which includes dupes)
+        _update_company(db, company_id, people_count=len(person_ids))
 
         if not person_ids:
             # No people found on website — fall back to Google search for LinkedIn profiles

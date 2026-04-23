@@ -11,7 +11,7 @@ import logging
 from difflib import get_close_matches, SequenceMatcher
 
 from app.services.keyword_matcher import KeywordResult
-from app.services.expertise_analyzer import EXPERTISE_CATEGORIES
+from app.services.expertise_analyzer import EXPERTISE_CATEGORIES, resolve_matched_sectors
 
 log = logging.getLogger(__name__)
 
@@ -93,17 +93,17 @@ def merge(keyword_result: KeywordResult, llm_result: dict) -> dict:
     # ── justification ────────────────────────────────────────────────────
     justification = llm_result.get("justification") or ""
 
-    # ── sectors (merge keyword + LLM) ────────────────────────────────────
+    # ── sectors (LLM only — keyword matching removed due to false positives) ──
     llm_sectors = llm_result.get("sectors") or llm_result.get("sector") or []
     if isinstance(llm_sectors, str):
         llm_sectors = [s.strip() for s in llm_sectors.split(";") if s.strip()]
-    kw_sectors = keyword_result.sectors or []
-    seen_sectors = {s.lower() for s in llm_sectors}
     sectors = list(llm_sectors)
-    for s in kw_sectors:
-        if s.lower() not in seen_sectors:
-            sectors.append(s)
-            seen_sectors.add(s.lower())
+
+    # ── matched_sectors (resolve integer IDs → canonical names) ─────────────
+    llm_matched = llm_result.get("matched_sectors") or []
+    if isinstance(llm_matched, str):
+        llm_matched = [s.strip() for s in llm_matched.split(";") if s.strip()]
+    matched_sectors = resolve_matched_sectors(llm_matched)
 
     # ── geographies (merge keyword + LLM) ────────────────────────────────
     llm_geo = llm_result.get("geographies") or llm_result.get("geography") or []
@@ -132,10 +132,12 @@ def merge(keyword_result: KeywordResult, llm_result: dict) -> dict:
         "justification": justification,
         "explicit_expertise_13": merged_13,
         "sectors": sectors,
+        "matched_sectors": matched_sectors,
         "geographies": geographies,
         "inferred_expertise_functional": func,
         "topic_overlap": topics,
         "inference_reasoning": llm_result.get("inference_reasoning"),
+        "company_practice": llm_result.get("company_practice"),
     }
 
 

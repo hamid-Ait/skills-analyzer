@@ -54,13 +54,13 @@ def get_skills_matrix(company_id: UUID, db: Session = Depends(get_db)):
     ).fetchall()
     top_expertise = [ExpertiseCount(name=name, count=count) for name, count in exp_rows]
 
-    # Sectors
+    # Sectors (split semicolon-separated values into individual sectors)
     sec_rows = db.execute(
         text("""
-            SELECT sector, COUNT(*) as cnt
-            FROM people
+            SELECT TRIM(s) AS sector, COUNT(*) AS cnt
+            FROM people, regexp_split_to_table(sector, ';') AS s
             WHERE company_id = :cid AND sector IS NOT NULL
-            GROUP BY sector
+            GROUP BY TRIM(s)
             ORDER BY cnt DESC
             LIMIT 15
         """),
@@ -68,13 +68,13 @@ def get_skills_matrix(company_id: UUID, db: Session = Depends(get_db)):
     ).fetchall()
     sectors = [ExpertiseCount(name=name, count=count) for name, count in sec_rows]
 
-    # Geographies
+    # Geographies (split semicolon-separated values into individual geographies)
     geo_rows = db.execute(
         text("""
-            SELECT geography, COUNT(*) as cnt
-            FROM people
+            SELECT TRIM(g) AS geography, COUNT(*) AS cnt
+            FROM people, regexp_split_to_table(geography, ';') AS g
             WHERE company_id = :cid AND geography IS NOT NULL
-            GROUP BY geography
+            GROUP BY TRIM(g)
             ORDER BY cnt DESC
             LIMIT 15
         """),
