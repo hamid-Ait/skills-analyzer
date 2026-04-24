@@ -785,6 +785,31 @@ expertise (Drupal / consulting sites)
 
   If only one sub-section exists, store only that key.
 
+education
+  Look for a section whose heading text or class contains "education", "academic",
+  "qualifications", or "academic background". Common patterns:
+    <section class="profile-education"> or <div class="education-section">
+    or a <h2>/<h3> with text "Education" followed by list items.
+  Extract each qualification as a dict with these keys (null for missing):
+    { "degree": "MBA", "institution": "Harvard Business School", "year": "2005" }
+  Store as extra["education"] = [list of dicts].
+  If no education section is found, omit the key (do not store an empty list).
+
+  Pattern:
+    edu_section = (
+        soup.select_one(".profile-education") or
+        soup.select_one("[class*='education']") or
+        soup.find(lambda tag: tag.name in ("h2","h3","h4") and
+                  "education" in tag.get_text(strip=True).lower())
+    )
+    # If found via heading, use the following sibling ul/ol/div
+    education = []
+    for item in edu_section.select("li, .education-item, .qualification"):
+        text = item.get_text(" ", strip=True)
+        education.append({"degree": None, "institution": None, "year": None, "raw": text})
+    if education:
+        extra["education"] = education
+
 image_url  — extraction priority order:
   1. Locate the main portrait/photo <img> (look for class names containing
      "photo", "portrait", "headshot", "avatar", "profile", "hero", "picture").
@@ -872,6 +897,10 @@ Extraction guidance (same patterns as PROFILE_PAGE_PROMPT):
                expertise_capabilities from .profile-expertise__capabilities a
                Use only <a> tags (not ".field__item") to avoid duplicates.
                Skip <a> with class "button" or text "Read more"/"Read less".
+             → if an education section exists (class/heading contains "education",
+               "academic", "qualifications"), extract each entry as a dict:
+               { "degree": ..., "institution": ..., "year": ..., "raw": <full text> }
+               Store as extra["education"] = [list of dicts]. Omit key if absent.
 
 Reply with ONLY the function — no imports, no JSON block, no extra prose:
 
@@ -997,6 +1026,13 @@ _PATH_BLOCKLIST: frozenset[str] = frozenset({
     "search", "events", "resources", "services", "product", "pricing",
     "story", "stories", "testimonial", "case-study", "case-studies",
     "demo", "book-a-demo", "talk-to", "meet-with", "spotlight",
+    # Content/capability pages that may contain consultant profiles but are NOT team listings
+    "capabilities", "capability", "insights", "insight", "industries",
+    "industry", "solutions", "solution", "sectors", "sector",
+    "work", "case-studies", "case-study",
+    # Generic "about the company" narrative pages — never a people listing
+    "who-we-are", "our-story", "our-mission", "our-values", "about-us",
+    "our-purpose", "our-history", "our-culture",
 })
 
 # Link text patterns that indicate story/sales pages, not team pages
@@ -1149,6 +1185,19 @@ def discover_team_url(client: LLMClient, base_url: str,
     # Tier 1 — heuristic (no LLM)
     url = discover_team_url_local(base_url, html)
     if url:
+        # Validate: fetch the candidate and check if it links to a more specific
+        # people/leadership page. Sites with JS-rendered navs often surface a
+        # generic "about" page from the homepage HTML; the real team listing is
+        # one level deeper. If the candidate page itself contains a higher-scoring
+        # people link, use that instead.
+        try:
+            candidate_html, _ = fetch_html(url, session)
+            deeper = discover_team_url_local(url, candidate_html)
+            if deeper and deeper != url:
+                log.info(f"  [DISCOVER] Refined heuristic: {url!r} -> {deeper!r}")
+                url = deeper
+        except Exception:
+            pass  # if candidate fetch fails, proceed with original heuristic result
         return url
 
     # Tier 2 — LLM fallback (reuses already-fetched html, no re-fetch)

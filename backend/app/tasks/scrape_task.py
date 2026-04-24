@@ -49,7 +49,6 @@ def _update_company(db, company_id: str, **kwargs):
 def scrape_company(self, company_id: str, discover: bool = True,
                    follow_profiles: bool = True, enrich_linkedin: bool = False):
     """Celery task: scrape one company URL using the existing agent.py."""
-    import anthropic
     from scraping_agent.waf_bypass import WafSession
 
     db = SessionLocal()
@@ -65,7 +64,25 @@ def scrape_company(self, company_id: str, discover: bool = True,
         status = "discovering" if discover else "scraping"
         _update_company(db, company_id, status=status)
 
-        client = anthropic.Anthropic(api_key=settings.ANTHROPIC_API_KEY)
+        provider_key_map = {
+            "claude":   settings.ANTHROPIC_API_KEY,
+            "openai":   settings.OPENAI_API_KEY,
+            "deepseek": settings.DEEPSEEK_API_KEY,
+            "gemini":   settings.GOOGLE_API_KEY,
+        }
+        scraping_provider = settings.LLM_PROVIDER_SCRAPING or settings.LLM_PROVIDER
+        scraping_model    = settings.LLM_MODEL_SCRAPING or None
+        client = agent.LLMClient(
+            provider=scraping_provider,
+            api_key=provider_key_map.get(scraping_provider, ""),
+            model=scraping_model,
+        )
+
+        discovery_provider = settings.LLM_PROVIDER_DISCOVERY or scraping_provider
+        discovery_client = agent.LLMClient(
+            provider=discovery_provider,
+            api_key=provider_key_map.get(discovery_provider, ""),
+        )
 
         proxy_list = []
         if settings.PROXY_URLS:
@@ -76,7 +93,7 @@ def scrape_company(self, company_id: str, discover: bool = True,
         # Discover team page (or reuse previously discovered team_url)
         team_url = company.team_url or company.url
         if discover:
-            found = agent.discover_team_url(client, company.url, session)
+            found = agent.discover_team_url(discovery_client, company.url, session)
             if found:
                 team_url = found
                 _update_company(db, company_id, team_url=found)
