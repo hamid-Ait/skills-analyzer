@@ -2,6 +2,7 @@ import logging
 import time
 from datetime import datetime, timezone
 
+from app.config import settings
 from app.tasks.celery_app import celery_app
 from app.config import settings
 from app.database import SessionLocal
@@ -119,8 +120,8 @@ _MATCHED_SECTOR_KEYWORDS: dict[str, list[str]] = {
 
 
 def _filter_sectors(sectors: list[str]) -> list[str]:
-    """Strip any sector value not in the fixed SECTOR_VOCAB."""
-    return [s for s in sectors if s in _VALID_SECTORS]
+    """Pass sectors through as-is — sectors are now free-text from the LLM."""
+    return sectors
 
 
 def _filter_matched_sectors(sectors: list[str], profile_text: str) -> list[str]:
@@ -139,6 +140,7 @@ def _filter_matched_sectors(sectors: list[str], profile_text: str) -> list[str]:
 
 def _profile_text(p: Person) -> str:
     """Concatenate all searchable text fields for a person in lowercase."""
+    extra = p.extra or {}
     parts = [
         p.name or "",
         p.title or "",
@@ -148,6 +150,8 @@ def _profile_text(p: Person) -> str:
         p.linkedin_summary or "",
         p.linkedin_experience_summary or "",
         " ".join(p.linkedin_skills or []),
+        " ".join(extra.get("expertise_industries") or []),
+        " ".join(extra.get("expertise_capabilities") or []),
     ]
     return " ".join(parts).lower()
 
@@ -184,6 +188,13 @@ def _build_person_entry(p: Person) -> dict:
         entry["linkedin_experience_summary"] = p.linkedin_experience_summary
     if p.linkedin_skills:
         entry["linkedin_skills"] = p.linkedin_skills
+    extra = p.extra or {}
+    if extra.get("expertise_industries"):
+        entry["website_industries"] = extra["expertise_industries"]
+    if extra.get("expertise_capabilities"):
+        entry["website_capabilities"] = extra["expertise_capabilities"]
+    if extra.get("education"):
+        entry["website_education"] = extra["education"]
     return entry
 
 
@@ -192,10 +203,13 @@ def _apply_result(person: Person, result: dict):
     person.primary_expertise = result.get("primary_expertise")
     person.justification = result.get("justification")
     # Support both old (matched_13_categories) and new (explicit_expertise_13) field names
-    person.matched_13_categories = (
+    categories = (
         result.get("explicit_expertise_13")
         or result.get("matched_13_categories", [])
     )
+    ptext = _profile_text(person)
+    person.matched_13_categories = _filter_categories(list(categories or []), ptext)
+
     # Sectors/geographies: new prompt returns arrays, DB column is Text
     sectors = result.get("sectors") or result.get("sector")
     if isinstance(sectors, str):
@@ -204,10 +218,10 @@ def _apply_result(person: Person, result: dict):
     matched_sectors = result.get("matched_sectors") or []
     if isinstance(matched_sectors, str):
         matched_sectors = [s.strip() for s in matched_sectors.split(";") if s.strip()]
-    ptext = _profile_text(person)
     matched_sectors = _filter_matched_sectors(list(matched_sectors), ptext)
     # Enforce coupling: add any parent sectors implied by matched sectors
-    sectors = _enforce_sector_coupling(sectors, matched_sectors, person.name or "")
+    # Sector coupling enforcement disabled — sectors are now free-text, not controlled vocab
+    # sectors = _enforce_sector_coupling(sectors, matched_sectors, person.name or "")
     person.sector = "; ".join(sectors) if sectors else None
     person.matched_sector = matched_sectors or None
     geographies = result.get("geographies") or result.get("geography")

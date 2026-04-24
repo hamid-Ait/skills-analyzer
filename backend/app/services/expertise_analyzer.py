@@ -341,62 +341,261 @@ def resolve_matched_sectors(raw: list) -> list[str]:
 # Never skip, merge, or omit anyone. One result per input person."""
 
 
-# ── System prompt ─────────────────────────────────────────────────────────────
+# # ── System prompt ─────────────────────────────────────────────────────────────
+# EXPERTISE_SYSTEM_PROMPT = """
+# # TAXONOMIES (exact strings only)
+# <expertise>Revenue Growth, Operational Improvements, Finance and Accounting, Marketing, People and Talent, Technology, M&A and Corporate Development, Real Estate & Assets, R&D, Environment (ESG), Governance (ESG), Social (ESG), Legal</expertise>
+# <sectors>Healthcare, Pharmaceuticals & Life Sciences, Financial Services, Private Equity, Energy & Utilities, Consumer & Retail, Food & Beverage, Automotive, Industrials & Manufacturing, Technology & Software, Real Estate, Transportation & Logistics, Education, Government & Public Sector, Non-profit & Social Sector, Insurance, Media & Entertainment, Agriculture & Food</sectors>
+# <matched_sectors>Agriculture, Horticulture, Forestry & Fishing=1; Financial, Investment and Insurance Services=2; Media, News, Publishing & Information Services=3; Education & Training=4; Civil, Mechanical, Electrical Engineering and Architecture=5; Advertising and Marketing=6; Arts, Entertainment, Recreation, Sports=7; Manufacturing and Product Development=8; Aerospace=9; Automotive=10; Wholesale, Retail & Hiring=11; Wellbeing, Fitness and Beauty=12; Warehousing and Storage=13; Mining, Quarrying and Extraction=14; Professional, Business & Support Services=15; Real Estate & Property: Industrial, Commercial and Private=16; Transportation and Logistics=17; Tourism, Travel and Hospitality=18; Chemicals and Materials=19; Life Sciences=20; Construction=21; Defence, Protection and Security=22; Energy=23; Environment=24; Public Services=25; Utilities=26; Design Activities=27; Food and Beverage=28; Pharmaceutical=29; Telecommunications=30; Maritime & Marine=31; Pets & Domesticated Animals=32; Repairs, Maintenance & Servicing=33; Electronics & Electrical=34; Healthcare, Medical & Social Care=35; Agnostic=36; Consumer=37; Industrials=38; Computing, Technology, Robotics & AI=39</matched_sectors>
+# <geos>Europe, North America, Asia Pacific, Middle East & Africa, Latin America</geos>
+#
+# # TASK
+# Classify each consultant profile into 3 layers + metadata. Return JSON array only.
+#
+# ## LAYER 1: Explicit Expertise (2-4 max)
+# - Match ONLY <expertise> strings with verbatim evidence in profile.
+# - R&D: must lead scientific/technical R&D (not advise). Legal: must mention litigation/contracts/law firm. ESG tags: require explicit environmental/social/governance terms.
+# - Return [] if no direct match.
+#
+# ## LAYER 2: Inferred Functional Expertise (0-5 max)
+# - Infer specific capabilities NOT stated but deduced from bio/role/seniority/industry.
+# - Use precise labels (e.g., "Distressed Asset Turnaround"), not generic titles.
+# - Require strong contextual signal; return [] if weak.
+#
+# ## LAYER 3: Topic Overlap (≤20)
+# - 1-4 word capitalized phrases bridging Layer 1 + Lay like er 2.
+# - Grounded in profile text; no buzzwords.
+#
+# ## INPUT FIELDS
+# - `website_industries` and `website_capabilities`: extracted directly from the firm's own profile page. Treat these as primary direct evidence — equivalent in weight to an explicit bio statement. Use them to assign SECTORS and MATCHED_SECTORS without requiring additional bio confirmation.
+# - `website_education`: educational background from the firm's profile page. Use for context only; do not assign expertise categories based solely on degree subject.
+#
+# ## SECTORS & MATCHED_SECTORS
+# - Select sectors from <sectors> ONLY with direct evidence (explicit name, practice reference, OR matching website_industries entry).
+# - Each sector needs its own direct evidence — do NOT add a broader sector just because a more specific one applies: Food & Beverage alone does NOT qualify for Consumer & Retail (requires explicit mention of retail stores, apparel, or non-food consumer categories); Pharmaceuticals & Life Sciences alone does NOT qualify for Healthcare (requires explicit mention of hospitals, providers, or payers); Automotive alone does NOT qualify for Industrials & Manufacturing.
+# - Coupling rule: every matched_sectors ID must have a corresponding sector string in `sectors`. If evidence justifies a matched ID, ADD the parent sector to `sectors` — do NOT drop the matched ID. Never leave matched_sectors populated while sectors is empty; resolve by adding the missing parent sector, not by removing the matched sector.
+# - Map each selected sector to SINGLE most precise ID from <matched_sectors>:
+#   • Use conditional ID if trigger words appear (e.g., "biotech"→20), ELSE default ID.
+#   • Output integers only. Return [] if no sectors.
+# - Default→Conditional mapping: Healthcare→35; Financial Services/Private Equity/Insurance→2; Food & Beverage→28; Automotive→10; Technology & Software→39; Real Estate→16; Transportation & Logistics→17; Education→4; Government/Non-profit→25; Pharmaceuticals & Life Sciences→29 (→20 if biotech/diagnostics/device/genomics); Energy & Utilities→23 (→26 if utility/water/grid); Consumer & Retail→37 (→11 if retail/wholesale/staffing); Industrials & Manufacturing→8 (→38 if heavy industry/equipment); Media & Entertainment→3 (→7 if sports/film/gaming); Agriculture & Food→1 (→28 if processed food/CPG).
+#
+# ## GEOGRAPHIES
+# - Select from <geos> ONLY where expertise was applied (client/projects), not office location.
+#
+# ## PRIMARY EXPERTISE
+# - Single most defining category from <expertise>. Tiebreak: prefer category in job title/practice group.
+# - Justification: 1 sentence citing specific evidence.
+#
+# ## OUTPUT SCHEMA (strict JSON, no commentary)
+#   {{
+#     "name": "string",
+#     "primary_expertise": "string",
+#     "justification": "string",
+#     "explicit_expertise_13": ["string"],
+#     "sectors": ["string"],
+#     "matched_sectors": [int],
+#     "geographies": ["string"],
+#     "inferred_expertise_functional": ["string"],
+#     "inference_reasoning": "string",
+#     "topic_overlap": ["string"]
+#   }}
+# - All arrays may be empty []. matched_sectors MUST be integers. One object per input person."""
+
 EXPERTISE_SYSTEM_PROMPT = """
-# TAXONOMIES (exact strings only)
+# TAXONOMIES
+
 <expertise>Revenue Growth, Operational Improvements, Finance and Accounting, Marketing, People and Talent, Technology, M&A and Corporate Development, Real Estate & Assets, R&D, Environment (ESG), Governance (ESG), Social (ESG), Legal</expertise>
-<sectors>Healthcare, Pharmaceuticals & Life Sciences, Financial Services, Private Equity, Energy & Utilities, Consumer & Retail, Food & Beverage, Automotive, Industrials & Manufacturing, Technology & Software, Real Estate, Transportation & Logistics, Education, Government & Public Sector, Non-profit & Social Sector, Insurance, Media & Entertainment, Agriculture & Food</sectors>
-<matched_sectors>Agriculture, Horticulture, Forestry & Fishing=1; Financial, Investment and Insurance Services=2; Media, News, Publishing & Information Services=3; Education & Training=4; Civil, Mechanical, Electrical Engineering and Architecture=5; Advertising and Marketing=6; Arts, Entertainment, Recreation, Sports=7; Manufacturing and Product Development=8; Aerospace=9; Automotive=10; Wholesale, Retail & Hiring=11; Wellbeing, Fitness and Beauty=12; Warehousing and Storage=13; Mining, Quarrying and Extraction=14; Professional, Business & Support Services=15; Real Estate & Property: Industrial, Commercial and Private=16; Transportation and Logistics=17; Tourism, Travel and Hospitality=18; Chemicals and Materials=19; Life Sciences=20; Construction=21; Defence, Protection and Security=22; Energy=23; Environment=24; Public Services=25; Utilities=26; Design Activities=27; Food and Beverage=28; Pharmaceutical=29; Telecommunications=30; Maritime & Marine=31; Pets & Domesticated Animals=32; Repairs, Maintenance & Servicing=33; Electronics & Electrical=34; Healthcare, Medical & Social Care=35; Agnostic=36; Consumer=37; Industrials=38; Computing, Technology, Robotics & AI=39</matched_sectors>
+
+<sectors>Healthcare, Pharmaceuticals & Life Sciences, Financial Services, Private Equity, Energy & Utilities, Consumer & Retail, Food & Beverage, Automotive, Industrials & Manufacturing, Technology & Software, Real Estate, Transportation & Logistics, Education, Government & Public Sector, Non-profit & Social Sector, Insurance, Media & Entertainment, Agriculture & Food, Agnostic</sectors>
+
+<matched_sectors>Agriculture, Horticulture, Forestry & Fishing, Financial, Investment and Insurance Services, Media, News, Publishing & Information Services, Education & Training, Civil, Mechanical, Electrical Engineering and Architecture, Advertising and Marketing, Arts, Entertainment, Recreation, Sports, Manufacturing and Product Development, Aerospace, Automotive, Wholesale, Retail & Hiring, Wellbeing, Fitness and Beauty, Warehousing and Storage, Mining, Quarrying and Extraction, Professional, Business & Support Services, Real Estate & Property: Industrial, Commercial and Private, Transportation and Logistics, Tourism, Travel and Hospitality, Chemicals and Materials, Life Sciences, Construction, Defence, Protection and Security, Energy, Environment, Public Services, Utilities, Design Activities, Food and Beverage, Pharmaceutical, Telecommunications, Maritime & Marine, Pets & Domesticated Animals, Repairs, Maintenance & Servicing, Electronics & Electrical, Healthcare, Medical & Social Care, Agnostic, Consumer, Industrials, Computing, Technology, Robotics & AI</matched_sectors>
+
 <geos>Europe, North America, Asia Pacific, Middle East & Africa, Latin America</geos>
 
+---
+
 # TASK
-Classify each consultant profile into 3 layers + metadata. Return JSON array only.
+Classify each consultant profile into 3 layers + metadata. Return **JSON array only**. No explanatory text before or after.
+
+---
 
 ## LAYER 1: Explicit Expertise (2-4 max)
-- Match ONLY <expertise> strings with verbatim evidence in profile.
-- R&D: must lead scientific/technical R&D (not advise). Legal: must mention litigation/contracts/law firm. ESG tags: require explicit environmental/social/governance terms.
+- Match ONLY from `<expertise>` using **verbatim or near-verbatim** evidence (e.g., "revenue growth strategy" matches "Revenue Growth").
+- **R&D**: requires leading scientific or technical R&D (not advising R&D organizations).
+- **Legal**: requires litigation, contracts, IP law, or law firm partnership.
+- **ESG tags**: require explicit environmental, social, or governance keywords.
 - Return [] if no direct match.
+- **If more than 4 matches**, prioritize by: (1) appears in job title → (2) appears in practice group → (3) most frequently mentioned. Truncate to 4.
+
+---
 
 ## LAYER 2: Inferred Functional Expertise (0-5 max)
-- Infer specific capabilities NOT stated but deduced from bio/role/seniority/industry.
-- Use precise labels (e.g., "Distressed Asset Turnaround"), not generic titles.
-- Require strong contextual signal; return [] if weak.
+- Infer capabilities **NOT explicitly stated** but strongly implied by bio/role/seniority/industry/results.
+- Use precise labels (e.g., "Distressed Asset Turnaround", not "Turnaround").
+- **Confidence threshold**: include only if confidence >70% based on:
+  - Seniority (Director/Partner/VP+ → higher confidence)
+  - Quantifiable results (e.g., "increased EBITDA by 30%")
+  - Industry-standard role expectations (e.g., "CFO" → "Financial Planning & Analysis")
+- Return [] if weak or ambiguous signal.
+- **If more than 5 matches**, keep highest-confidence only.
+
+---
 
 ## LAYER 3: Topic Overlap (≤20)
-- 1-4 word capitalized phrases bridging Layer 1 + Lay like er 2.
-- Grounded in profile text; no buzzwords.
+- This is a **granular set of expertise topics** (1–4 word phrases) that are **supported by both Layer 1 (explicit expertise) and Layer 2 (inferred functional expertise)**.
+- Topics should be **specific, actionable, and grounded in the profile text** – not generic buzzwords.
+- Examples from real profiles:
+  - For a Finance and Accounting + Restructuring expert:  
+    `["Restructuring", "Strategic Planning", "Cash Management", "Financial Analysis", "Capital Raising", "Liquidity Management"]`
+  - For a Revenue Growth + Pricing Strategy expert:  
+    `["Pricing Optimization", "Value-Based Pricing", "Market Entry Strategy", "Commercial Due Diligence"]`
+- **Do NOT** simply concatenate Layer 1 and Layer 2 strings (e.g., avoid `"Finance and Accounting Restructuring"` unless that exact phrase is used in the profile).
+- Instead, extract specific **verbs, nouns, and technical domains** that appear in the profile and logically combine the two layers.
+- If the profile text contains explicit technical terms (e.g., "AI", "data security", "ERP implementation"), include them as topics.
+- **If more than 20 topics**, keep the most relevant to primary_expertise and the strongest evidence.
+- Return [] if no clear topics emerge.
+
+---
+## INPUT FIELDS
+- `website_industries`: extracted directly from the firm's own profile page. Use as primary evidence for **SECTORS** and **MATCHED_SECTORS**.
+- `website_capabilities`: granular topic expertise areas declared by the firm for this person (e.g. "Pricing & Revenue Optimization", "Post-merger Integration", "Route-to-Market Design"). Use these primarily as **Layer 3 topic_overlap** entries — they represent specific practice-level expertises, not broad 13-category buckets. Only map to **LAYER 1 (explicit_expertise_13)** when the capability is an unambiguous, direct match to one of the 13 categories AND confirmed by bio or title (e.g. "People & Organization" → "People and Talent" only if the person's role is clearly HR/OD-focused). Do NOT use website_capabilities as a basis for Layer 2 — declared capabilities belong in Layer 1 (if broadly matching) or Layer 3 (specific topics), not as inferences.
+- `website_education`: educational background from the firm's profile page. Use for context only; do not assign expertise categories based solely on degree subject.
 
 ## SECTORS & MATCHED_SECTORS
-- Select sectors from <sectors> ONLY with direct evidence (explicit name or practice reference).
-- Each sector needs its own direct evidence — do NOT add a broader sector just because a more specific one applies: Food & Beverage alone does NOT qualify for Consumer & Retail (requires explicit mention of retail stores, apparel, or non-food consumer categories); Pharmaceuticals & Life Sciences alone does NOT qualify for Healthcare (requires explicit mention of hospitals, providers, or payers); Automotive alone does NOT qualify for Industrials & Manufacturing.
-- Coupling rule: every matched_sectors ID must have a corresponding sector string in `sectors`. If evidence justifies a matched ID, ADD the parent sector to `sectors` — do NOT drop the matched ID. Never leave matched_sectors populated while sectors is empty; resolve by adding the missing parent sector, not by removing the matched sector.
-- Map each selected sector to SINGLE most precise ID from <matched_sectors>:
-  • Use conditional ID if trigger words appear (e.g., "biotech"→20), ELSE default ID.
-  • Output integers only. Return [] if no sectors.
-- Default→Conditional mapping: Healthcare→35; Financial Services/Private Equity/Insurance→2; Food & Beverage→28; Automotive→10; Technology & Software→39; Real Estate→16; Transportation & Logistics→17; Education→4; Government/Non-profit→25; Pharmaceuticals & Life Sciences→29 (→20 if biotech/diagnostics/device/genomics); Energy & Utilities→23 (→26 if utility/water/grid); Consumer & Retail→37 (→11 if retail/wholesale/staffing); Industrials & Manufacturing→8 (→38 if heavy industry/equipment); Media & Entertainment→3 (→7 if sports/film/gaming); Agriculture & Food→1 (→28 if processed food/CPG).
+
+### Core Principle: Evidence-Based Only
+- **Both fields require direct evidence from the profile** (explicit sector name, client name, project description, industry terminology).
+- The two fields describe the **same underlying sector evidence** – one in free text, one as a controlled vocabulary string.
+- **Never add a sector or matched_sectors string without evidence.**
+
+### `sectors` (Free Text)
+- Infer from profile data. Use **concise, descriptive strings** (2-5 words typical).
+- Examples: `"biotech commercial strategy"`, `"hospital revenue cycle"`, `"retail supply chain"`, `"pharmaceutical R&D portfolio"`
+- Not tied to any fixed list. Write what the evidence actually describes.
+- May have multiple entries if profile spans multiple sectors.
+- Return [] if no sector evidence.
+
+### `matched_sectors` (Controlled Vocabulary)
+- Also infer from profile data, but **use exact strings from the `<matched_sectors>` list above**.
+- Do NOT modify the strings. Use them exactly as written.
+- If evidence matches a string in `<matched_sectors>`, include that exact string.
+- May have multiple strings if profile spans multiple sectors.
+- Return [] if no sector evidence or if evidence does not match any controlled string.
+- **Validation**: For each `matched_sectors` entry, you should be able to point to the same evidence that supports a `sectors` entry. They are two representations of the same fact.
+
+### Workflow for Sector Classification
+
+1. Scan profile for **any sector evidence** (industry names, client types, project domains, role contexts).
+2. For the evidence, write a **concise free-text sector string** → add to `sectors` array.
+3. For the **same evidence**, find the **exact matching string(s)** in `<matched_sectors>` → add to `matched_sectors` array.
+4. If evidence fits multiple `<matched_sectors>` strings, include all that apply.
+5. If evidence matches a `sectors` entry but has no match in `<matched_sectors>`, still include the `sectors` entry but no corresponding `matched_sectors` entry.
+6. If evidence matches a `<matched_sectors>` string but you already have a corresponding free-text `sectors` entry, both are present — that's correct.
+
+### Sector Examples
+
+**Example 1: Pharma commercial**
+- Profile: "Led pricing strategy for oncology portfolio at Novartis"
+- Evidence: pharmaceutical company
+- `sectors`: `["pharmaceutical commercial strategy"]`
+- `matched_sectors`: `["Pharmaceutical"]`
+- Valid ✅
+
+**Example 2: Biotech operations**
+- Profile: "CFO at a genomics startup, managed Series B raise"
+- Evidence: genomics startup
+- `sectors`: `["biotech finance"]`
+- `matched_sectors`: `["Life Sciences"]`
+- Valid ✅
+
+**Example 3: Hospital + Pharma cross-sector**
+- Profile: "Advised both a hospital system and a pharmaceutical company"
+- Evidence: hospital system + pharmaceutical company
+- `sectors`: `["hospital operations", "pharmaceutical pricing"]`
+- `matched_sectors`: `["Healthcare, Medical & Social Care", "Pharmaceutical"]`
+- Valid ✅
+
+**Example 4: Consumer retail**
+- Profile: "Optimized supply chain for a national grocery chain"
+- Evidence: grocery chain
+- `sectors`: `["grocery retail supply chain"]`
+- `matched_sectors`: `["Wholesale, Retail & Hiring"]`
+- Valid ✅
+
+**Example 5: Weak evidence (reject both)**
+- Profile: "Helped company grow market share"
+- No sector evidence
+- `sectors`: `[]`
+- `matched_sectors`: `[]`
+- Valid ✅
+
+---
 
 ## GEOGRAPHIES
-- Select from <geos> ONLY where expertise was applied (client/projects), not office location.
+- Select from `<geos>` ONLY where expertise was **applied** (client/project location), not office location.
+- Examples:
+  - "Led European supply chain transformation" → `["Europe"]`
+  - "Based in NY, client in London" → `["Europe"]` (not North America)
+  - "Global role with projects in US, Germany, Japan" → `["Europe", "North America", "Asia Pacific"]`
+- Return [] if no geographic evidence.
+
+---
 
 ## PRIMARY EXPERTISE
-- Single most defining category from <expertise>. Tiebreak: prefer category in job title/practice group.
-- Justification: 1 sentence citing specific evidence.
+- Single most defining category from `<expertise>`.
+- Tiebreak priority:
+  1. Appears in job title (partial match allowed: "Head of Revenue" → Revenue Growth)
+  2. Appears in practice group or team name
+  3. Most frequent mention in profile
+- **Justification**: Exactly 1 sentence citing specific evidence (e.g., "Job title 'Partner, Revenue Practice' and 4 projects mention top-line growth").
+
+---
 
 ## OUTPUT SCHEMA (strict JSON, no commentary)
-  {{
-    "name": "string",
-    "primary_expertise": "string",
-    "justification": "string",
-    "explicit_expertise_13": ["string"],
-    "sectors": ["string"],
-    "matched_sectors": [int],
-    "geographies": ["string"],
-    "inferred_expertise_functional": ["string"],
-    "inference_reasoning": "string",
-    "topic_overlap": ["string"]
-  }}
-- All arrays may be empty []. matched_sectors MUST be integers. One object per input person."""
 
+{
+  "name": "string",
+  "primary_expertise": "string",
+  "justification": "string",
+  "explicit_expertise_13": ["string"],
+  "sectors": ["string"],
+  "matched_sectors": ["string"],
+  "geographies": ["string"],
+  "inferred_expertise_functional": ["string"],
+  "inference_reasoning": "string",
+  "topic_overlap": ["string"]
+}
+
+- Arrays may be empty [].
+- `matched_sectors` must contain **exact strings** from `<matched_sectors>` taxonomy.
+- Sort `explicit_expertise_13` alphabetically.
+- Sort `matched_sectors` alphabetically.
+- Sort `sectors` alphabetically.
+- Sort `inferred_expertise_functional` by relevance (most relevant first).
+- Sort `topic_overlap` alphabetically.
+- One object per input person.
+
+---
+
+## COMPLETE EXAMPLE
+
+**Input Profile:**
+
+**Output:**
+```json
+{
+  "name": "John Smith",
+  "primary_expertise": "Revenue Growth",
+  "justification": "Job title 'Partner in Revenue Practice' and multiple projects mention commercial transformation and pricing.",
+  "explicit_expertise_13": ["Revenue Growth"],
+  "sectors": ["hospital revenue cycle", "pharmaceutical commercial strategy"],
+  "matched_sectors": ["Healthcare, Medical & Social Care", "Pharmaceutical"],
+  "geographies": ["Europe"],
+  "inferred_expertise_functional": ["Commercial Excellence", "Pricing Strategy", "Revenue Cycle Management"],
+  "inference_reasoning": "'Pricing optimization' suggests pricing strategy; 'revenue cycle management' is explicit; CFO background and biotech imply commercial excellence.",
+  "topic_overlap": ["CFO Experience", "Commercial Transformation", "Cross-Border Advisory", "EBITDA Improvement", "Oncology Portfolio", "Pricing Optimization", "Revenue Cycle Enhancement", "Value-Based Pricing"]
+}
+"""
 # ── LLM Providers ───────────────────────────────────────────────────────────
 class BaseLLMProvider(ABC):
     @abstractmethod
@@ -608,6 +807,29 @@ def format_people_for_analysis(people: list[dict], company_name: str = "") -> st
             if isinstance(skills, list):
                 skills = ", ".join(str(s) for s in skills[:20])
             lines.append(f"  Skills: {skills}")
+        if p.get("website_industries"):
+            industries = p["website_industries"]
+            if isinstance(industries, list):
+                industries = "; ".join(str(s) for s in industries)
+            lines.append(f"  Website Industries: {industries}")
+        if p.get("website_capabilities"):
+            caps = p["website_capabilities"]
+            if isinstance(caps, list):
+                caps = "; ".join(str(s) for s in caps)
+            lines.append(f"  Website Capabilities: {caps}")
+        if p.get("website_education"):
+            edu = p["website_education"]
+            if isinstance(edu, list):
+                parts = []
+                for e in edu:
+                    if isinstance(e, dict):
+                        raw = e.get("raw") or ", ".join(filter(None, [e.get("degree"), e.get("institution"), e.get("year")]))
+                        if raw:
+                            parts.append(raw)
+                    else:
+                        parts.append(str(e))
+                edu = " | ".join(parts)
+            lines.append(f"  Website Education: {edu}")
         lines.append("")
     return "\n".join(lines)
 
