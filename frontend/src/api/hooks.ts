@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import api from './client'
-import type { JobDetail, CompanyDetail, PersonList, SkillsMatrix, AnalyticsOverview, HeatmapData, GlobalPersonList } from './types'
+import type { JobDetail, CompanyDetail, PersonDetail, PersonList, SkillsMatrix, AnalyticsOverview, HeatmapData, GlobalPersonList } from './types'
 
 export function usePollingJob(jobId: string | null, intervalMs = 60000) {
   const [job, setJob] = useState<JobDetail | null>(null)
@@ -78,6 +78,23 @@ export function usePeople(companyId: string | null, page = 1, pageSize = 50, sea
   }, [companyId, page, pageSize, search])
 
   return { data, loading }
+}
+
+export function usePerson(personId: string | null) {
+  const [person, setPerson] = useState<PersonDetail | null>(null)
+  const [loading, setLoading] = useState(false)
+
+  useEffect(() => {
+    if (!personId) { setPerson(null); return }
+    setLoading(true)
+    api
+      .get<PersonDetail>(`/people/${personId}`)
+      .then(({ data }) => setPerson(data))
+      .catch(console.error)
+      .finally(() => setLoading(false))
+  }, [personId])
+
+  return { person, loading }
 }
 
 export function useSkillsMatrix(companyId: string | null) {

@@ -58,13 +58,21 @@ export interface PersonDetail extends PersonBrief {
   twitter_url: string | null
   other_url: string | null
   profile_url: string | null
+  source_url: string | null
+  extra: Record<string, unknown> | null
   justification: string | null
+  matched_sector: string[] | null
   geography: string | null
   inferred_expertise_functional: string[] | null
+  inference_reasoning: string | null
   matched_inferred_expertise_topics: string[] | null
   linkedin_headline: string | null
+  linkedin_summary: string | null
   linkedin_experience_summary: string | null
+  linkedin_skills: string[] | null
+  linkedin_enriched: boolean
   data_source: string | null
+  profile_enriched: boolean
   created_at: string
   updated_at: string
 }
