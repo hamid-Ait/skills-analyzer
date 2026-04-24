@@ -65,15 +65,14 @@ def scrape_company(self, company_id: str, discover: bool = True,
         status = "discovering" if discover else "scraping"
         _update_company(db, company_id, status=status)
 
-        # Build LLM clients — separate providers for discovery vs scraping
         provider_key_map = {
-            "claude": settings.ANTHROPIC_API_KEY,
-            "openai": settings.OPENAI_API_KEY,
+            "claude":   settings.ANTHROPIC_API_KEY,
+            "openai":   settings.OPENAI_API_KEY,
             "deepseek": settings.DEEPSEEK_API_KEY,
-            "gemini": settings.GOOGLE_API_KEY,
+            "gemini":   settings.GOOGLE_API_KEY,
         }
         scraping_provider = settings.LLM_PROVIDER_SCRAPING or settings.LLM_PROVIDER
-        scraping_model = settings.LLM_MODEL_SCRAPING or None
+        scraping_model    = settings.LLM_MODEL_SCRAPING or None
         client = agent.LLMClient(
             provider=scraping_provider,
             api_key=provider_key_map.get(scraping_provider, ""),
