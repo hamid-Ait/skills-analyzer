@@ -1,3 +1,4 @@
+import { useNavigate } from 'react-router-dom'
 import { Box, Typography, Card, CardContent, Avatar, Chip, Link } from '@mui/material'
 import { LinkedIn } from '@mui/icons-material'
 import { proxyImageUrl } from '../api/client'
@@ -5,10 +6,11 @@ import type { PersonBrief } from '../api/types'
 
 interface Props {
   people: PersonBrief[]
-  onPersonClick: (id: string) => void
+  companyId?: string
 }
 
-export default function PeopleCards({ people, onPersonClick }: Props) {
+export default function PeopleCards({ people, companyId }: Props) {
+  const navigate = useNavigate()
   return (
     <Box
       sx={{
@@ -25,7 +27,7 @@ export default function PeopleCards({ people, onPersonClick }: Props) {
             transition: 'box-shadow 0.2s, transform 0.2s',
             '&:hover': { boxShadow: 4, transform: 'translateY(-2px)' },
           }}
-          onClick={() => onPersonClick(person.id)}
+          onClick={() => navigate(`/people/${person.id}`, { state: { from: companyId ? `/companies/${companyId}` : '/dashboard' } })}
         >
           <CardContent sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center', textAlign: 'center', pb: 2 }}>
             <Avatar

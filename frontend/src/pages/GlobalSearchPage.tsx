@@ -142,7 +142,7 @@ export default function GlobalSearchPage() {
                     key={person.id}
                     hover
                     sx={{ cursor: 'pointer' }}
-                    onClick={() => navigate(`/companies/${person.company_id}`)}
+                    onClick={() => navigate(`/people/${person.id}`, { state: { from: '/search' } })}
                   >
                     <TableCell sx={{ width: 40 }}>
                       <Avatar

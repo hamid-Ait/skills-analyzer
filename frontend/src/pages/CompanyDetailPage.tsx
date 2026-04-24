@@ -13,13 +13,11 @@ import ExportButton from '../components/ExportButton'
 import PeopleTable from '../components/PeopleTable'
 import PeopleCards from '../components/PeopleCards'
 import SkillsMatrix from '../components/SkillsMatrix'
-import PersonDetailModal from '../components/PersonDetailModal'
 import { useCompany, usePeople } from '../api/hooks'
 
 function PeopleCardView({ companyId }: { companyId: string }) {
   const [page, setPage] = useState(1)
   const [search, setSearch] = useState('')
-  const [selectedPersonId, setSelectedPersonId] = useState<string | null>(null)
   const pageSize = 48
 
   const { data, loading } = usePeople(companyId, page, pageSize, search)
@@ -39,10 +37,7 @@ function PeopleCardView({ companyId }: { companyId: string }) {
         <Box sx={{ textAlign: 'center', py: 4 }}><CircularProgress /></Box>
       ) : (
         <>
-          <PeopleCards
-            people={data?.items || []}
-            onPersonClick={(id) => setSelectedPersonId(id)}
-          />
+          <PeopleCards people={data?.items || []} companyId={companyId} />
           {data && data.total > pageSize && (
             <Box sx={{ display: 'flex', justifyContent: 'center', mt: 3 }}>
               <Pagination
@@ -55,10 +50,6 @@ function PeopleCardView({ companyId }: { companyId: string }) {
           )}
         </>
       )}
-      <PersonDetailModal
-        personId={selectedPersonId}
-        onClose={() => setSelectedPersonId(null)}
-      />
     </Box>
   )
 }

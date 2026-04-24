@@ -1,9 +1,9 @@
 import { useState } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { Box, TextField, Chip, Avatar, Link, Pagination } from '@mui/material'
 import { DataGrid, GridColDef } from '@mui/x-data-grid'
 import { usePeople } from '../api/hooks'
 import { proxyImageUrl } from '../api/client'
-import PersonDetailModal from './PersonDetailModal'
 
 const columns: GridColDef[] = [
   {
@@ -73,9 +73,9 @@ const columns: GridColDef[] = [
 ]
 
 export default function PeopleTable({ companyId }: { companyId: string }) {
+  const navigate = useNavigate()
   const [page, setPage] = useState(1)
   const [search, setSearch] = useState('')
-  const [selectedPersonId, setSelectedPersonId] = useState<string | null>(null)
   const pageSize = 50
 
   const { data, loading } = usePeople(companyId, page, pageSize, search)
@@ -99,7 +99,7 @@ export default function PeopleTable({ companyId }: { companyId: string }) {
         disableRowSelectionOnClick
         hideFooter
         getRowId={(row) => row.id}
-        onRowClick={(params) => setSelectedPersonId(params.row.id)}
+        onRowClick={(params) => navigate(`/people/${params.row.id}`, { state: { from: `/companies/${companyId}` } })}
         sx={{
           '& .MuiDataGrid-cell': { py: 1 },
           '& .MuiDataGrid-row': { cursor: 'pointer' },
@@ -115,10 +115,6 @@ export default function PeopleTable({ companyId }: { companyId: string }) {
           />
         </Box>
       )}
-      <PersonDetailModal
-        personId={selectedPersonId}
-        onClose={() => setSelectedPersonId(null)}
-      />
     </Box>
   )
 }
