@@ -44,6 +44,7 @@ class PersonDetail(PersonBrief):
     linkedin_education: Optional[Any] = None
     linkedin_skills: Optional[list[str]] = None
     linkedin_enriched: bool = False
+    expertise_evidence: Optional[dict[str, Any]] = None
     created_at: datetime
     updated_at: datetime
 

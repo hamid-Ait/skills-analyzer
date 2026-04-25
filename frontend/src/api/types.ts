@@ -37,6 +37,19 @@ export interface JobDetail extends JobBrief {
   companies: CompanyBrief[]
 }
 
+export interface EvidenceEntry {
+  source: string
+  text: string
+}
+
+export interface ExpertiseEvidence {
+  categories?: Record<string, EvidenceEntry[]>
+  sectors?: Record<string, EvidenceEntry[]>
+  matched_sectors?: Record<string, EvidenceEntry[]>
+  inferred?: Record<string, EvidenceEntry[]>
+  topics?: Record<string, EvidenceEntry[]>
+}
+
 export interface PersonBrief {
   id: string
   name: string
@@ -71,6 +84,7 @@ export interface PersonDetail extends PersonBrief {
   linkedin_experience_summary: string | null
   linkedin_skills: string[] | null
   linkedin_enriched: boolean
+  expertise_evidence: ExpertiseEvidence | null
   data_source: string | null
   profile_enriched: boolean
   created_at: string

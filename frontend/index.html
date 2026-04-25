@@ -5,6 +5,56 @@
     <link rel="icon" type="image/svg+xml" href="/vite.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>People Intelligence Platform</title>
+  <style>
+    @media print {
+      /* Hide navigation bar */
+      header.MuiAppBar-root { display: none !important; }
+
+      /* Hide interactive / navigation elements */
+      .no-print { display: none !important; }
+
+      /* Single-column profile layout */
+      .profile-grid {
+        display: block !important;
+      }
+      .profile-left-panel {
+        position: static !important;
+        margin-bottom: 24px;
+        break-inside: avoid;
+      }
+
+      /* Expand source evidence accordion */
+      .MuiAccordion-root .MuiAccordionDetails-root {
+        display: block !important;
+        visibility: visible !important;
+      }
+      .MuiAccordion-root .MuiCollapse-root {
+        height: auto !important;
+        visibility: visible !important;
+      }
+
+      /* Preserve chip colors */
+      * {
+        -webkit-print-color-adjust: exact;
+        print-color-adjust: exact;
+      }
+
+      /* Remove interactive shadows / transforms */
+      .MuiCard-root,
+      .MuiChip-root,
+      .MuiPaper-root {
+        box-shadow: none !important;
+      }
+
+      /* Avoid breaking cards and sections mid-page */
+      .MuiCard-root,
+      .MuiBox-root { break-inside: avoid; }
+
+      @page {
+        margin: 1.2cm 1.5cm;
+      }
+    }
+  </style>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet" />

@@ -15,7 +15,7 @@ class Settings(BaseSettings):
     LLM_MODEL_OPENAI: str = "gpt-4o-mini"
     LLM_MODEL_GEMINI: str = "gemini-2.5-flash-lite"
     LLM_MODEL_DEEPSEEK: str = "deepseek-chat"
-    LLM_MODEL_QWEN: str = "qwen3.6-35b-a3b"
+    LLM_MODEL_QWEN: str = "qwen3.6-plus"
     DEEPSEEK_API_KEY: str = ""
     GOOGLE_API_KEY: str = ""
     LLM_PROVIDER_SCRAPING: str = "claude"    # override for scraping code gen (defaults to LLM_PROVIDER)

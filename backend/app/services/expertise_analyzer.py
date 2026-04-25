@@ -551,6 +551,25 @@ Classify each consultant profile into 3 layers + metadata. Return **JSON array o
 
 ---
 
+## EVIDENCE MAP
+
+For every item you assign, record which specific input field(s) provided the supporting evidence.
+Populate `evidence_map` in the output object alongside the classification arrays.
+
+Keys:
+- `categories` — one entry per item in `explicit_expertise_13`
+- `sectors` — one entry per item in `sectors`
+- `matched_sectors` — one entry per item in `matched_sectors`
+- `inferred` — one entry per item in `inferred_expertise_functional`
+- `topics` — one entry per item in `topic_overlap`
+
+Each value is a list of `{"source": "<field>", "text": "<phrase>"}` objects.
+Valid source values: `bio`, `title`, `department`, `linkedin_headline`, `linkedin_summary`, `linkedin_experience`, `linkedin_skills`, `website_industries`, `website_capabilities`.
+Keep `text` to ≤15 words — extract the specific phrase that triggered the assignment, not the full field.
+Omit a key entirely if the array it covers is empty.
+
+---
+
 ## OUTPUT SCHEMA (strict JSON, no commentary)
 
 {
@@ -563,7 +582,14 @@ Classify each consultant profile into 3 layers + metadata. Return **JSON array o
   "geographies": ["string"],
   "inferred_expertise_functional": ["string"],
   "inference_reasoning": "string",
-  "topic_overlap": ["string"]
+  "topic_overlap": ["string"],
+  "evidence_map": {
+    "categories": {"<category>": [{"source": "string", "text": "string"}]},
+    "sectors": {"<sector_string>": [{"source": "string", "text": "string"}]},
+    "matched_sectors": {"<matched_sector_string>": [{"source": "string", "text": "string"}]},
+    "inferred": {"<inferred_item>": [{"source": "string", "text": "string"}]},
+    "topics": {"<topic>": [{"source": "string", "text": "string"}]}
+  }
 }
 
 - Arrays may be empty [].
@@ -593,7 +619,34 @@ Classify each consultant profile into 3 layers + metadata. Return **JSON array o
   "geographies": ["Europe"],
   "inferred_expertise_functional": ["Commercial Excellence", "Pricing Strategy", "Revenue Cycle Management"],
   "inference_reasoning": "'Pricing optimization' suggests pricing strategy; 'revenue cycle management' is explicit; CFO background and biotech imply commercial excellence.",
-  "topic_overlap": ["CFO Experience", "Commercial Transformation", "Cross-Border Advisory", "EBITDA Improvement", "Oncology Portfolio", "Pricing Optimization", "Revenue Cycle Enhancement", "Value-Based Pricing"]
+  "topic_overlap": ["CFO Experience", "Commercial Transformation", "Cross-Border Advisory", "EBITDA Improvement", "Oncology Portfolio", "Pricing Optimization", "Revenue Cycle Enhancement", "Value-Based Pricing"],
+  "evidence_map": {
+    "categories": {
+      "Revenue Growth": [
+        {"source": "title", "text": "Partner in Revenue Practice"},
+        {"source": "bio", "text": "commercial transformation and pricing"}
+      ]
+    },
+    "sectors": {
+      "hospital revenue cycle": [{"source": "bio", "text": "hospital revenue cycle management"}],
+      "pharmaceutical commercial strategy": [{"source": "bio", "text": "oncology portfolio at Novartis"}]
+    },
+    "matched_sectors": {
+      "Healthcare, Medical & Social Care": [{"source": "bio", "text": "hospital revenue cycle management"}],
+      "Pharmaceutical": [{"source": "bio", "text": "oncology portfolio at Novartis"}]
+    },
+    "inferred": {
+      "Commercial Excellence": [{"source": "title", "text": "Partner in Revenue Practice"}, {"source": "bio", "text": "cross-border deals"}],
+      "Pricing Strategy": [{"source": "bio", "text": "pricing optimization"}],
+      "Revenue Cycle Management": [{"source": "bio", "text": "revenue cycle management"}]
+    },
+    "topics": {
+      "CFO Experience": [{"source": "bio", "text": "CFO background"}],
+      "Commercial Transformation": [{"source": "bio", "text": "commercial transformation"}],
+      "Pricing Optimization": [{"source": "bio", "text": "pricing optimization"}],
+      "Revenue Cycle Enhancement": [{"source": "bio", "text": "revenue cycle management"}]
+    }
+  }
 }
 """
 # ── LLM Providers ───────────────────────────────────────────────────────────
