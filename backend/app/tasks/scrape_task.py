@@ -153,7 +153,7 @@ def scrape_company(self, company_id: str, discover: bool = True,
             log.info(f"Team URL redirected: {team_url} -> {final_url}")
             _update_company(db, company_id, team_url=final_url)
 
-        # Store results
+
         # Store results (people_count updated after insertion to reflect actual inserts)
         _update_company(
             db, company_id,
