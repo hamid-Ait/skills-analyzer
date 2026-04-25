@@ -44,6 +44,7 @@ class Person(Base):
     linkedin_experience_summary: Mapped[str | None] = mapped_column(Text, nullable=True)
     data_source: Mapped[str | None] = mapped_column(String(100), nullable=True)
     expertise_raw: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    expertise_evidence: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     raw_data_json: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
 
     # LinkedIn enrichment fields (via Apify)

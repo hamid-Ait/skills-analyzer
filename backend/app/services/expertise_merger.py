@@ -85,7 +85,7 @@ def merge(keyword_result: KeywordResult, llm_result: dict) -> dict:
     llm_13 = llm_result.get("explicit_expertise_13") or llm_result.get("matched_13_categories") or []
     if isinstance(llm_13, str):
         llm_13 = [s.strip() for s in llm_13.split(";")]
-    merged_13 = _validate_13(list(set(kw_13 + llm_13)))
+    merged_13 = _validate_13(list(set(llm_13)))  # kw_13 disabled — LLM only
 
     # ── primary_expertise ────────────────────────────────────────────────
     primary = llm_result.get("primary_expertise") or keyword_result.primary_expertise
@@ -127,6 +127,19 @@ def merge(keyword_result: KeywordResult, llm_result: dict) -> dict:
     if isinstance(topics, str):
         topics = [s.strip() for s in topics.split(";") if s.strip()]
 
+    # Augment evidence_map: for categories the keyword matcher added that the
+    # LLM didn't cover, inject the specific keyword(s) that triggered the match.
+    evidence_map: dict = dict(llm_result.get("evidence_map") or {})
+    categories_evidence: dict = dict(evidence_map.get("categories") or {})
+    for cat in kw_13:
+        if cat not in categories_evidence:
+            hits = keyword_result.matched_13_keywords.get(cat, [])
+            categories_evidence[cat] = [
+                {"source": "keyword_match", "text": kw} for kw in hits[:5]
+            ] or [{"source": "keyword_match", "text": "keyword analysis"}]
+    if categories_evidence:
+        evidence_map["categories"] = categories_evidence
+
     return {
         "primary_expertise": primary,
         "justification": justification,
@@ -138,6 +151,7 @@ def merge(keyword_result: KeywordResult, llm_result: dict) -> dict:
         "topic_overlap": topics,
         "inference_reasoning": llm_result.get("inference_reasoning"),
         "company_practice": llm_result.get("company_practice"),
+        "evidence_map": evidence_map,
     }
 
 

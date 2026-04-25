@@ -237,6 +237,7 @@ def _apply_result(person: Person, result: dict):
         result.get("topic_overlap")
         or result.get("matched_inferred_expertise_topics", [])
     )
+    person.expertise_evidence = result.get("evidence_map") or None
     person.expertise_raw = result
     if result.get("company_practice"):
         person.department = result["company_practice"]
