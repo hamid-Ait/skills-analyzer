@@ -93,6 +93,13 @@ class LLMClient:
             from google import genai
             self._genai_client = genai.Client(api_key=api_key or os.environ.get("GOOGLE_API_KEY", ""))
             self._model = model or "gemini-2.5-flash"
+        elif provider == "qwen":
+            from openai import OpenAI
+            self._client = OpenAI(
+                api_key=api_key or os.environ.get("QWEN_API_KEY", ""),
+                base_url="https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
+                )
+            self._model = model or "qwen3.6-plus"
         else:
             raise ValueError(f"Unknown LLM provider: {provider}")
 
@@ -117,7 +124,7 @@ class LLMClient:
             }
             return resp.content[0].text, usage
 
-        elif self.provider in ("openai", "deepseek"):
+        elif self.provider in ("openai", "deepseek", "qwen"):
             oai_messages = [{"role": "system", "content": system}] + messages
             resp = self._client.chat.completions.create(
                 model=self._model,
@@ -623,6 +630,15 @@ Given a URL and a cleaned HTML snippet you will:
    - "path_segment" -- /team/page/2 or /team/start/24
    - "next_link"    -- <a rel="next"> or visible "Next" / "Load more" anchor
    - "cursor"       -- ?cursor=<token> from page body
+
+   For "query_param": param_start is the page value of the FIRST paginated URL
+   (the one that matches the already-fetched base page). Check whether pagination
+   is 0-based (?page=0 is first) or 1-based (?page=1 is first) by inspecting
+   the actual links or pagination controls in the HTML.
+   Examples:
+     /team?page=0 → /team?page=1 → /team?page=2: param_name="page", param_step=1, param_start=0
+     /team?page=1 → /team?page=2 → /team?page=3: param_name="page", param_step=1, param_start=1
+     /team?start=0 → /team?start=20 → /team?start=40: param_name="start", param_step=20, param_start=0
 
    For "path_segment": set param_name to the path segment label (e.g. "page",
    "start", "offset"). param_step is the increment per page, param_start is the

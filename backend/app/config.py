@@ -12,7 +12,7 @@ class Settings(BaseSettings):
     APIFY_API_TOKEN: str = ""
     LLM_PROVIDER: str = "gemini"  # "claude", "openai", or "gemini"
     LLM_MODEL_CLAUDE: str = "claude-sonnet-4-20250514"
-    LLM_MODEL_OPENAI: str = "gpt-4o-mini"
+    LLM_MODEL_OPENAI: str = "gpt-5-mini"
     LLM_MODEL_GEMINI: str = "gemini-2.5-flash-lite"
     LLM_MODEL_DEEPSEEK: str = "deepseek-chat"
     LLM_MODEL_QWEN: str = "qwen3.6-plus"

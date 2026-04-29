@@ -10,7 +10,7 @@ from app.models import Job, Company, Person
 from app.services.expertise_analyzer import (
     format_people_for_analysis, get_provider,
     _parse_llm_response, _normalize_name,
-    EXPERTISE_SYSTEM_PROMPT, SECTOR_VOCAB,
+    EXPERTISE_SYSTEM_PROMPT, SECTOR_VOCAB, EXPERTISE_CATEGORIES,
 )
 from app.services.keyword_matcher import match_person_from_db
 from app.services.expertise_merger import merge, merge_keyword_only
@@ -171,8 +171,10 @@ def _filter_categories(categories: list[str], profile_text: str) -> list[str]:
     return filtered
 
 
-def _build_person_entry(p: Person) -> dict:
+def _build_person_entry(p: Person, company_name: str = "") -> dict:
     """Build the data dict sent to the LLM for a single person."""
+    from app.services.taxonomy_resolver import resolve_company_taxonomy
+
     entry = {
         "name": p.name,
         "title": p.title,
@@ -195,6 +197,19 @@ def _build_person_entry(p: Person) -> dict:
         entry["website_capabilities"] = extra["expertise_capabilities"]
     if extra.get("education"):
         entry["website_education"] = extra["education"]
+
+    if company_name:
+        hints = resolve_company_taxonomy(
+            company_name=company_name,
+            capabilities=entry.get("website_capabilities") or [],
+            industries=entry.get("website_industries") or [],
+        )
+        if hints:
+            if hints.get("l1_hints"):
+                entry["resolved_l1_hints"] = hints["l1_hints"]
+            if hints.get("sector_hints"):
+                entry["resolved_sector_hints"] = hints["sector_hints"]
+
     return entry
 
 
@@ -286,7 +301,8 @@ def analyze_expertise_batch(self, company_id: str, person_ids: list[str]):
         # Step 2: Process in LLM batches
         provider = get_provider()
         total_updated = 0
-        total_batches = (len(people) + BATCH_SIZE - 1) // BATCH_SIZE
+        batch_size = provider.batch_size
+        total_batches = (len(people) + batch_size - 1) // batch_size
 
         # Log prompt fingerprint so we can verify the worker has the latest prompt
         prompt_fingerprint = hash(EXPERTISE_SYSTEM_PROMPT) & 0xFFFFFFFF
@@ -295,7 +311,7 @@ def analyze_expertise_batch(self, company_id: str, person_ids: list[str]):
             f"Prompt fingerprint: {prompt_fingerprint:#010x} | "
             f"has_layer2b={has_layer2b} | "
             f"provider={settings.LLM_PROVIDER} | "
-            f"people={len(people)} batches={total_batches}"
+            f"people={len(people)} batch_size={batch_size} batches={total_batches}"
         )
 
         # Gemini free tier: 15 RPM. Space out calls to avoid 429s.
@@ -303,14 +319,61 @@ def analyze_expertise_batch(self, company_id: str, person_ids: list[str]):
         min_interval = 4.5 if settings.LLM_PROVIDER in rate_limit_providers else 0
         last_call_time = 0.0
 
-        for batch_idx in range(0, len(people), BATCH_SIZE):
-            batch = people[batch_idx:batch_idx + BATCH_SIZE]
-            batch_num = batch_idx // BATCH_SIZE + 1
-            batch_data = [_build_person_entry(p) for p in batch]
+        for batch_idx in range(0, len(people), batch_size):
+            batch = people[batch_idx:batch_idx + batch_size]
+            batch_num = batch_idx // batch_size + 1
+            batch_data = [_build_person_entry(p, company_name=company.name if company else "") for p in batch]
             text = format_people_for_analysis(batch_data, company_name=company.name if company else "")
 
             try:
-                raw_response = provider.analyze_batch(text)
+                if min_interval > 0:
+                    elapsed = time.monotonic() - last_call_time
+                    if elapsed < min_interval:
+                        time.sleep(min_interval - elapsed)
+
+                _valid_l1 = set(EXPERTISE_CATEGORIES)
+                _expected_fields = [
+                    "primary_expertise", "explicit_expertise_13",
+                    "inferred_expertise_functional", "topic_overlap",
+                    "sectors", "geographies",
+                ]
+
+                def _collect_validation_errors(results: list[dict]) -> list[str]:
+                    errors = []
+                    if not results:
+                        errors.append("Empty result array — expected one object per person")
+                        return errors
+                    first = results[0]
+                    missing = [f for f in _expected_fields if f not in first]
+                    if missing:
+                        errors.append(f"Missing fields in output: {missing}")
+                    for r in results:
+                        bad_l1 = [
+                            v for v in (r.get("explicit_expertise_13") or [])
+                            if v not in _valid_l1
+                        ]
+                        if bad_l1:
+                            errors.append(
+                                f"{r.get('name', '?')}: explicit_expertise_13 contains "
+                                f"non-taxonomy values: {bad_l1}"
+                            )
+                    return errors
+
+                # Call LLM with retry — backoff on 429, error-context on validation failure
+                max_retries = 3
+                retry_text = text
+                for attempt in range(max_retries + 1):
+                    last_call_time = time.monotonic()
+                    try:
+                        raw_response = provider.analyze_batch(retry_text)
+                        break
+                    except Exception as retry_exc:
+                        if "429" in str(retry_exc) and attempt < max_retries:
+                            wait = min(15 * (2 ** attempt), 120)
+                            log.warning(f"  Batch {batch_num}: rate limited, retrying in {wait}s")
+                            time.sleep(wait)
+                        else:
+                            raise
 
                 # Log LLM usage
                 if provider.last_usage:
@@ -324,35 +387,36 @@ def analyze_expertise_batch(self, company_id: str, person_ids: list[str]):
                         output_tokens=provider.last_usage.get("output_tokens"),
                     )
 
-                if min_interval > 0:
-                    elapsed = time.monotonic() - last_call_time
-                    if elapsed < min_interval:
-                        time.sleep(min_interval - elapsed)
-
-                # Retry with backoff on rate-limit (429) errors
-                max_retries = 3
-                for attempt in range(max_retries + 1):
-                    last_call_time = time.monotonic()
-                    try:
-                        raw_response = provider.analyze_batch(text)
-                        break
-                    except Exception as retry_exc:
-                        if "429" in str(retry_exc) and attempt < max_retries:
-                            wait = min(15 * (2 ** attempt), 120)
-                            log.warning(f"  Batch {batch_num}: rate limited, retrying in {wait}s")
-                            time.sleep(wait)
-                        else:
-                            raise
                 results = _parse_llm_response(raw_response)
                 log.info(f"  Batch {batch_num}: LLM returned {len(results)} results")
 
-                # Check which expected fields are present in first result
-                if results:
-                    first = results[0]
-                    expected = ["primary_expertise", "explicit_expertise_13", "inferred_expertise_functional", "topic_overlap", "sectors", "geographies"]
-                    missing = [f for f in expected if f not in first]
-                    if missing:
-                        log.warning(f"  Batch {batch_num}: LLM response missing fields: {missing}")
+                # Validate output — on error inject context and retry once
+                val_errors = _collect_validation_errors(results)
+                if val_errors:
+                    log.warning(
+                        f"  Batch {batch_num}: validation errors, retrying with error context: %s",
+                        val_errors,
+                    )
+                    error_note = (
+                        "\n\nPREVIOUS OUTPUT FAILED VALIDATION:\n"
+                        + "\n".join(f"- {e}" for e in val_errors)
+                        + "\nFix ONLY these issues and return the complete corrected JSON array."
+                    )
+                    retry_text = text + error_note
+                    last_call_time = time.monotonic()
+                    raw_response = provider.analyze_batch(retry_text)
+                    if provider.last_usage:
+                        log_usage(
+                            company_id=company_id,
+                            service="llm",
+                            provider=settings.LLM_PROVIDER,
+                            model=provider.last_usage.get("model"),
+                            pipeline_step="analysis_retry",
+                            input_tokens=provider.last_usage.get("input_tokens"),
+                            output_tokens=provider.last_usage.get("output_tokens"),
+                        )
+                    results = _parse_llm_response(raw_response)
+                    log.info(f"  Batch {batch_num}: retry returned {len(results)} results")
 
                 # Build name → LLM result mapping for this batch
                 llm_by_name: dict[str, dict] = {}

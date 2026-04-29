@@ -419,6 +419,14 @@ Classify each consultant profile into 3 layers + metadata. Return **JSON array o
 
 ---
 
+## CRITICAL — TAXONOMY SEPARATION
+The `<expertise>` list and the `<sectors>` list are DIFFERENT taxonomies with DIFFERENT purposes:
+- `<expertise>` items → functional consulting capability categories (e.g. "Revenue Growth", "Finance and Accounting", "M&A and Corporate Development"). These go in `explicit_expertise_13`.
+- `<sectors>` items → industry/client sectors (e.g. "Healthcare", "Industrials & Manufacturing", "Financial Services"). These go in `sectors` and `matched_sectors`.
+**NEVER place a `<sectors>` item in `explicit_expertise_13`.** If you think "Healthcare" belongs in Layer 1, it does not — put it in `sectors` instead.
+
+---
+
 ## LAYER 1: Explicit Expertise (2-4 max)
 - Match ONLY from `<expertise>` using **verbatim or near-verbatim** evidence (e.g., "revenue growth strategy" matches "Revenue Growth").
 - **R&D**: requires leading scientific or technical R&D (not advising R&D organizations).
@@ -430,7 +438,13 @@ Classify each consultant profile into 3 layers + metadata. Return **JSON array o
 ---
 
 ## LAYER 2: Inferred Functional Expertise (0-5 max)
-- Infer capabilities **NOT explicitly stated** but strongly implied by bio/role/seniority/industry/results.
+A capability qualifies for Layer 2 ONLY if ALL THREE conditions hold:
+- **(a) ABSENT from `explicit_expertise_13`** — not already assigned in Layer 1
+- **(b) ABSENT from `website_capabilities`** — not a phrase the firm explicitly declared for this person
+- **(c) DERIVED** from seniority level, quantifiable results, or role-standard expectations, with ≥1 supporting phrase from `bio`, `title`, `department`, or `linkedin_*` fields
+
+If any condition fails → exclude from Layer 2.
+
 - Use precise labels (e.g., "Distressed Asset Turnaround", not "Turnaround").
 - **Confidence threshold**: include only if confidence >70% based on:
   - Seniority (Director/Partner/VP+ → higher confidence)
@@ -460,6 +474,8 @@ Classify each consultant profile into 3 layers + metadata. Return **JSON array o
 - `website_industries`: extracted directly from the firm's own profile page. Use as primary evidence for **SECTORS** and **MATCHED_SECTORS**.
 - `website_capabilities`: granular topic expertise areas declared by the firm for this person (e.g. "Pricing & Revenue Optimization", "Post-merger Integration", "Route-to-Market Design"). Use these primarily as **Layer 3 topic_overlap** entries — they represent specific practice-level expertises, not broad 13-category buckets. Only map to **LAYER 1 (explicit_expertise_13)** when the capability is an unambiguous, direct match to one of the 13 categories AND confirmed by bio or title (e.g. "People & Organization" → "People and Talent" only if the person's role is clearly HR/OD-focused). Do NOT use website_capabilities as a basis for Layer 2 — declared capabilities belong in Layer 1 (if broadly matching) or Layer 3 (specific topics), not as inferences.
 - `website_education`: educational background from the firm's profile page. Use for context only; do not assign expertise categories based solely on degree subject.
+- `resolved_l1_hints`: Layer 1 categories pre-resolved from the firm's declared capability taxonomy. Treat as strong direct evidence for `explicit_expertise_13` — confirm against bio or title before including, but do not require additional keyword evidence.
+- `resolved_sector_hints`: `matched_sectors` entries pre-resolved from the firm's declared industry taxonomy. Include in `matched_sectors` unless clearly contradicted by profile text.
 
 ## SECTORS & MATCHED_SECTORS
 
@@ -556,15 +572,31 @@ Classify each consultant profile into 3 layers + metadata. Return **JSON array o
 For every item you assign, record which specific input field(s) provided the supporting evidence.
 Populate `evidence_map` in the output object alongside the classification arrays.
 
-Keys:
+### Evidence Source Normalization
+Map input field labels to these EXACT keys — never use raw input labels as source values:
+
+| Input label in profile        | `source` key to use       |
+|-------------------------------|---------------------------|
+| `Bio:`                        | `bio`                     |
+| `Title:`                      | `title`                   |
+| `Department:`                 | `department`              |
+| `LinkedIn Headline:`          | `linkedin_headline`       |
+| `LinkedIn Summary:`           | `linkedin_summary`        |
+| `LinkedIn Experience:`        | `linkedin_experience`     |
+| `Skills:`                     | `linkedin_skills`         |
+| `Website Industries:`         | `website_industries`      |
+| `Website Capabilities:`       | `website_capabilities`    |
+| `Resolved L1 Hints:`          | `resolved_l1_hints`       |
+| `Resolved Sector Hints:`      | `resolved_sector_hints`   |
+
+### Keys
 - `categories` — one entry per item in `explicit_expertise_13`
 - `sectors` — one entry per item in `sectors`
 - `matched_sectors` — one entry per item in `matched_sectors`
 - `inferred` — one entry per item in `inferred_expertise_functional`
 - `topics` — one entry per item in `topic_overlap`
 
-Each value is a list of `{"source": "<field>", "text": "<phrase>"}` objects.
-Valid source values: `bio`, `title`, `department`, `linkedin_headline`, `linkedin_summary`, `linkedin_experience`, `linkedin_skills`, `website_industries`, `website_capabilities`.
+Each value is a list of `{"source": "<key from table above>", "text": "<phrase>"}` objects.
 Keep `text` to ≤15 words — extract the specific phrase that triggered the assignment, not the full field.
 Omit a key entirely if the array it covers is empty.
 
@@ -600,6 +632,23 @@ Omit a key entirely if the array it covers is empty.
 - Sort `inferred_expertise_functional` by relevance (most relevant first).
 - Sort `topic_overlap` alphabetically.
 - One object per input person.
+
+---
+
+## PRE-OUTPUT VALIDATION (Execute internally — do NOT include in output)
+
+Before emitting the JSON array, verify each person object passes all checks:
+
+- [ ] `explicit_expertise_13` — every item is an exact string from `<expertise>` list; NO sector names (e.g. "Healthcare", "Industrials & Manufacturing" are INVALID here); ≤4 items; sorted alphabetically
+- [ ] `inferred_expertise_functional` — excludes all items already in `explicit_expertise_13` and all items from `website_capabilities`; ≤5 items
+- [ ] `topic_overlap` — ≤20 items; each entry is grounded in at least one profile field; sorted alphabetically
+- [ ] `sectors` — free-text strings only; no strings copied verbatim from `<matched_sectors>` list
+- [ ] `matched_sectors` — every item is an EXACT string from `<matched_sectors>` list; sorted alphabetically
+- [ ] `geographies` — every item is from `<geos>` list; based on client/project location, not office location
+- [ ] `evidence_map` — all `source` values use normalized keys from the table above (e.g. `linkedin_summary` not `"LinkedIn Summary"`); all `text` values are ≤15 words
+- [ ] Output is a raw JSON array. Zero markdown fences. Zero preamble or trailing commentary.
+
+If any check fails → correct before emitting.
 
 ---
 
@@ -651,6 +700,8 @@ Omit a key entirely if the array it covers is empty.
 """
 # ── LLM Providers ───────────────────────────────────────────────────────────
 class BaseLLMProvider(ABC):
+    batch_size: int = 10  # override in subclasses with tight output token limits
+
     @abstractmethod
     def analyze_batch(self, people_text: str) -> str:
         pass
@@ -679,6 +730,11 @@ class ClaudeProvider(BaseLLMProvider):
         return resp.content[0].text
 
 
+def _openai_is_reasoning(model: str) -> bool:
+    """True for models that use max_completion_tokens and don't support temperature."""
+    return model.startswith(("o1", "o3", "o4", "o5", "gpt-5"))
+
+
 class OpenAIProvider(BaseLLMProvider):
     def __init__(self):
         from openai import OpenAI
@@ -687,15 +743,19 @@ class OpenAIProvider(BaseLLMProvider):
         self.last_usage: dict | None = None
 
     def analyze_batch(self, people_text: str) -> str:
-        resp = self.client.chat.completions.create(
-            model=self.model,
-            messages=[
+        kwargs: dict = {
+            "model": self.model,
+            "messages": [
                 {"role": "system", "content": EXPERTISE_SYSTEM_PROMPT},
                 {"role": "user", "content": people_text},
             ],
-            max_tokens=16384,
-            temperature=0,
-        )
+        }
+        if _openai_is_reasoning(self.model):
+            kwargs["max_completion_tokens"] = 16384
+        else:
+            kwargs["max_tokens"] = 16384
+            kwargs["temperature"] = 0
+        resp = self.client.chat.completions.create(**kwargs)
         if resp.usage:
             self.last_usage = {
                 "input_tokens": resp.usage.prompt_tokens,
@@ -734,6 +794,8 @@ class GeminiProvider(BaseLLMProvider):
 
 class DeepSeekProvider(BaseLLMProvider):
     """DeepSeek uses an OpenAI-compatible API (max_tokens capped at 8192)."""
+    batch_size = 5  # 8192 output token cap — 10 profiles with evidence maps exceeds it
+
     def __init__(self):
         from openai import OpenAI
         self.client = OpenAI(
@@ -883,6 +945,16 @@ def format_people_for_analysis(people: list[dict], company_name: str = "") -> st
                         parts.append(str(e))
                 edu = " | ".join(parts)
             lines.append(f"  Website Education: {edu}")
+        if p.get("resolved_l1_hints"):
+            hints = p["resolved_l1_hints"]
+            if isinstance(hints, list):
+                hints = "; ".join(hints)
+            lines.append(f"  Resolved L1 Hints: {hints}")
+        if p.get("resolved_sector_hints"):
+            hints = p["resolved_sector_hints"]
+            if isinstance(hints, list):
+                hints = "; ".join(hints)
+            lines.append(f"  Resolved Sector Hints: {hints}")
         lines.append("")
     return "\n".join(lines)
 

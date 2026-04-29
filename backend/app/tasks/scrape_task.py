@@ -70,6 +70,7 @@ def scrape_company(self, company_id: str, discover: bool = True,
             "openai":   settings.OPENAI_API_KEY,
             "deepseek": settings.DEEPSEEK_API_KEY,
             "gemini":   settings.GOOGLE_API_KEY,
+            "qwen":     settings.QWEN_API_KEY,
         }
         scraping_provider = settings.LLM_PROVIDER_SCRAPING or settings.LLM_PROVIDER
         scraping_model    = settings.LLM_MODEL_SCRAPING or None
