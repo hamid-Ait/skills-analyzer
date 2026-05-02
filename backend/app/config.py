@@ -21,11 +21,13 @@ class Settings(BaseSettings):
     LLM_PROVIDER_SCRAPING: str = "claude"    # override for scraping code gen (defaults to LLM_PROVIDER)
     LLM_MODEL_SCRAPING: str = "claude-opus-4-6" #"claude-sonnet-4-20250514"      # override model for scraping (defaults to provider's default)
     LLM_PROVIDER_DISCOVERY: str = ""  # override for team page discovery (defaults to LLM_PROVIDER_SCRAPING)
+    PROMPT_VERSION: str = "v2"
     CORS_ORIGINS: str = "http://localhost:5173,http://localhost:3000"
     PROXY_URLS: Optional[str] = None
 
     class Config:
         env_file = str(Path(__file__).parent.parent.parent / ".env")
+        extra = "ignore"
 
 
 settings = Settings()

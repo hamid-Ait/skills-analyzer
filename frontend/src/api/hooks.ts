@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import api from './client'
-import type { JobDetail, CompanyDetail, PersonDetail, PersonList, SkillsMatrix, AnalyticsOverview, HeatmapData, GlobalPersonList, CostSummary } from './types'
+import type { JobDetail, CompanyDetail, PersonDetail, PersonList, SkillsMatrix, AnalyticsOverview, HeatmapData, GlobalPersonList, CostSummary, AnalysisRun } from './types'
 
 export function usePollingJob(jobId: string | null, intervalMs = 60000) {
   const [job, setJob] = useState<JobDetail | null>(null)
@@ -173,6 +173,55 @@ export function useGlobalSearch(
   }, [q, category, sector, geography, page, pageSize])
 
   return { data, loading }
+}
+
+export async function reanalyzePerson(personId: string): Promise<{ status: string; person_id: string }> {
+  const { data } = await api.post(`/people/${personId}/reanalyze`)
+  return data
+}
+
+export async function analyzePersonWith(personId: string, provider: string, model?: string): Promise<AnalysisRun> {
+  const { data } = await api.post(`/people/${personId}/analyze-with`, { provider, model: model || undefined })
+  return data
+}
+
+export interface ProviderInfo {
+  provider: string
+  default_model: string
+}
+
+export function useProviders() {
+  const [providers, setProviders] = useState<ProviderInfo[]>([])
+
+  useEffect(() => {
+    api
+      .get<ProviderInfo[]>('/providers')
+      .then(({ data }) => setProviders(data))
+      .catch(console.error)
+  }, [])
+
+  return providers
+}
+
+export function useAnalysisRuns(personId: string | null) {
+  const [runs, setRuns] = useState<AnalysisRun[]>([])
+  const [loading, setLoading] = useState(false)
+
+  const refresh = useCallback(() => {
+    if (!personId) return
+    setLoading(true)
+    api
+      .get<AnalysisRun[]>(`/people/${personId}/analysis-runs`)
+      .then(({ data }) => setRuns(data))
+      .catch(console.error)
+      .finally(() => setLoading(false))
+  }, [personId])
+
+  useEffect(() => {
+    refresh()
+  }, [refresh])
+
+  return { runs, loading, refresh }
 }
 
 export function useCostSummary(days = 30) {

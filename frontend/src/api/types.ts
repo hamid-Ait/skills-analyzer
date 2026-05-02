@@ -182,6 +182,31 @@ export interface GlobalPersonList {
   page_size: number
 }
 
+// Analysis run / comparison types
+
+export interface AnalysisRunResult {
+  name?: string | null
+  primary_expertise?: string | null
+  justification?: string | null
+  explicit_expertise_13?: string[] | null
+  inferred_expertise_functional?: string[] | null
+  inference_reasoning?: string | null
+  topic_overlap?: string[] | null
+  sectors?: string[] | null
+  matched_sectors?: string[] | null
+  geographies?: string[] | null
+  evidence_map?: ExpertiseEvidence | null
+}
+
+export interface AnalysisRun {
+  id: string
+  provider: string
+  model: string | null
+  version: number
+  result: AnalysisRunResult
+  created_at: string
+}
+
 // Cost monitoring types
 
 export interface ServiceCost {
