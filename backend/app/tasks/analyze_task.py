@@ -156,6 +156,23 @@ def _profile_text(p: Person) -> str:
     return " ".join(parts).lower()
 
 
+def _declared_text(p: Person) -> str:
+    """Concatenate only explicitly declared capability fields in lowercase.
+
+    Used for Layer 2 verbatim copy detection — narrative fields (bio,
+    experience summary) describe what was done and should not block
+    inference; only fields where capabilities are explicitly declared matter.
+    """
+    extra = p.extra or {}
+    parts = [
+        p.linkedin_headline or "",
+        p.linkedin_summary or "",
+        " ".join(p.linkedin_skills or []),
+        " ".join(extra.get("expertise_capabilities") or []),
+    ]
+    return " ".join(parts).lower()
+
+
 def _filter_categories(categories: list[str], profile_text: str) -> list[str]:
     """Remove categories that lack keyword support in the profile text."""
     filtered = []
@@ -443,18 +460,35 @@ def analyze_expertise_batch(self, company_id: str, person_ids: list[str]):
                     kw_result = keyword_results.get(norm)
                     llm_result = llm_by_name.get(norm, {})
 
-                    # Post-process: strip categories without keyword evidence
-                    if llm_result and llm_result.get("explicit_expertise_13"):
+                    if llm_result:
                         ptext = _profile_text(person)
-                        original = llm_result["explicit_expertise_13"]
-                        filtered = _filter_categories(original, ptext)
-                        if len(filtered) != len(original):
-                            removed = set(original) - set(filtered)
-                            log.info(
-                                "  %s: filtered categories %s",
-                                person.name, removed,
-                            )
-                        llm_result = {**llm_result, "explicit_expertise_13": filtered}
+
+                        # Post-process: strip categories without keyword evidence
+                        if llm_result.get("explicit_expertise_13"):
+                            original = llm_result["explicit_expertise_13"]
+                            filtered = _filter_categories(original, ptext)
+                            if len(filtered) != len(original):
+                                log.info(
+                                    "  %s: filtered categories %s",
+                                    person.name, set(original) - set(filtered),
+                                )
+                            llm_result = {**llm_result, "explicit_expertise_13": filtered}
+
+                        # Post-process: strip L2 items that appear verbatim in
+                        # declared fields (headline, summary, skills, capabilities).
+                        # Narrative fields (bio, experience) are inference triggers,
+                        # not capability declarations — they must not block L2.
+                        if llm_result.get("inferred_expertise_functional"):
+                            inferred = llm_result["inferred_expertise_functional"]
+                            dtext = _declared_text(person)
+                            clean = [i for i in inferred if i.lower() not in dtext]
+                            removed_v = set(inferred) - set(clean)
+                            if removed_v:
+                                log.info(
+                                    "  %s: stripped verbatim L2 items %s",
+                                    person.name, removed_v,
+                                )
+                            llm_result = {**llm_result, "inferred_expertise_functional": clean}
 
                     if kw_result and llm_result:
                         merged = merge(kw_result, llm_result)

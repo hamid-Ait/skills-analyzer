@@ -246,6 +246,10 @@ class OpenAIProvider(BaseLLMProvider):
 
 
 class GeminiProvider(BaseLLMProvider):
+    # Flash-Lite has a tighter practical output budget than full Flash.
+    # With evidence_map JSON, 10 profiles can exceed ~16k tokens; keep batches small.
+    batch_size = 5
+
     def __init__(self, model: str | None = None):
         from google import genai
         self.client = genai.Client(api_key=settings.GOOGLE_API_KEY)
@@ -469,8 +473,31 @@ def _normalize_name(name: str) -> str:
     return " ".join(name.lower().strip().split())
 
 
+def _extract_complete_objects(text: str) -> list[dict]:
+    """Extract all complete top-level JSON objects from a (possibly truncated) string."""
+    objects: list[dict] = []
+    depth = 0
+    start: int | None = None
+    for i, ch in enumerate(text):
+        if ch == "{":
+            if depth == 0:
+                start = i
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth == 0 and start is not None:
+                try:
+                    obj = json.loads(text[start : i + 1])
+                    if isinstance(obj, dict):
+                        objects.append(obj)
+                except json.JSONDecodeError:
+                    pass
+                start = None
+    return objects
+
+
 def _parse_llm_response(raw_response: str) -> list[dict]:
-    """Parse LLM JSON response, handling markdown fences and minor JSON errors."""
+    """Parse LLM JSON response, handling markdown fences and truncated output."""
     cleaned = raw_response.strip()
     if cleaned.startswith("```"):
         cleaned = cleaned.split("\n", 1)[1] if "\n" in cleaned else cleaned[3:]
@@ -478,25 +505,36 @@ def _parse_llm_response(raw_response: str) -> list[dict]:
         cleaned = cleaned[:-3]
     cleaned = cleaned.strip()
 
+    # 1. Happy path — full valid JSON
     try:
         results = json.loads(cleaned)
         if isinstance(results, list):
             return results
-        if isinstance(results, dict):  # single object — wrap it
+        if isinstance(results, dict):
             return [results]
         return []
     except json.JSONDecodeError:
         pass
 
-    # Attempt recovery: find the JSON array bounds and re-parse
+    # 2. Array bounds recovery (handles extra text before/after)
     start = cleaned.find("[")
     end = cleaned.rfind("]")
     if start != -1 and end != -1 and end > start:
         try:
-            results = json.loads(cleaned[start:end + 1])
+            results = json.loads(cleaned[start : end + 1])
             return results if isinstance(results, list) else []
         except json.JSONDecodeError:
             pass
+
+    # 3. Truncated output recovery — extract every complete object found
+    objects = _extract_complete_objects(cleaned)
+    if objects:
+        log.warning(
+            "LLM response was truncated — salvaged %d complete object(s). "
+            "Raw (first 200 chars): %s",
+            len(objects), cleaned[:200],
+        )
+        return objects
 
     log.error("Failed to parse LLM response as JSON. Raw (first 500 chars): %s", cleaned[:500])
     return []
