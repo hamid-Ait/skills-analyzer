@@ -1,0 +1,20 @@
+# Serving on bare IP — HTTP only (Caddy cannot issue TLS certs for IPs).
+# When you add a domain later, replace http://195.201.29.199 with yourdomain.com
+# and Caddy will handle HTTPS automatically.
+http://195.201.29.199 {
+    # API and docs → backend
+    handle /api/* {
+        reverse_proxy backend:8000
+    }
+    handle /docs* {
+        reverse_proxy backend:8000
+    }
+    handle /openapi.json {
+        reverse_proxy backend:8000
+    }
+
+    # Everything else → React frontend
+    handle {
+        reverse_proxy frontend:80
+    }
+}
