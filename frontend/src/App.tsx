@@ -6,6 +6,7 @@ import CompanyDetailPage from './pages/CompanyDetailPage'
 import PersonProfilePage from './pages/PersonProfilePage'
 import AnalyticsPage from './pages/AnalyticsPage'
 import GlobalSearchPage from './pages/GlobalSearchPage'
+import QADashboardPage from './pages/QADashboardPage'
 
 export default function App() {
   return (
@@ -18,6 +19,7 @@ export default function App() {
         <Route path="/people/:personId" element={<PersonProfilePage />} />
         <Route path="/analytics" element={<AnalyticsPage />} />
         <Route path="/search" element={<GlobalSearchPage />} />
+        <Route path="/qa" element={<QADashboardPage />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
     </Layout>

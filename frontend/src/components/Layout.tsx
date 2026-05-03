@@ -3,7 +3,7 @@ import { useNavigate, useLocation } from 'react-router-dom'
 import {
   AppBar, Toolbar, Typography, Box, IconButton, Button, Container,
 } from '@mui/material'
-import { CloudUpload, Dashboard, Groups, Analytics, Search } from '@mui/icons-material'
+import { CloudUpload, Dashboard, Groups, Analytics, Search, FactCheck } from '@mui/icons-material'
 
 export default function Layout({ children }: { children: ReactNode }) {
   const navigate = useNavigate()
@@ -50,6 +50,14 @@ export default function Layout({ children }: { children: ReactNode }) {
             sx={{ fontWeight: location.pathname === '/search' ? 700 : 400 }}
           >
             Search
+          </Button>
+          <Button
+            color="inherit"
+            startIcon={<FactCheck />}
+            onClick={() => navigate('/qa')}
+            sx={{ fontWeight: location.pathname === '/qa' ? 700 : 400 }}
+          >
+            QA
           </Button>
         </Toolbar>
       </AppBar>

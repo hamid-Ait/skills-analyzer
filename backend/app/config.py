@@ -21,8 +21,14 @@ class Settings(BaseSettings):
     LLM_PROVIDER_SCRAPING: str = "claude"    # override for scraping code gen (defaults to LLM_PROVIDER)
     LLM_MODEL_SCRAPING: str = "claude-opus-4-6" #"claude-sonnet-4-20250514"      # override model for scraping (defaults to provider's default)
     LLM_PROVIDER_DISCOVERY: str = ""  # override for team page discovery (defaults to LLM_PROVIDER_SCRAPING)
-    PROMPT_VERSION: str = "v2"
+    PROMPT_VERSION: str = "v4"
     CORS_ORIGINS: str = "http://localhost:5173,http://localhost:3000"
+
+    # QA validator thresholds (configurable via env vars)
+    QA_MAX_L1_CATEGORIES: int = 4
+    QA_MAX_DECLARED_CAPABILITIES: int = 8
+    QA_MAX_INFERRED: int = 5
+    QA_MAX_TOPICS: int = 20
     PROXY_URLS: Optional[str] = None
 
     class Config:

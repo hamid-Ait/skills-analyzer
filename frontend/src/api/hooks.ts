@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import api from './client'
-import type { JobDetail, CompanyDetail, PersonDetail, PersonList, SkillsMatrix, AnalyticsOverview, HeatmapData, GlobalPersonList, CostSummary, AnalysisRun } from './types'
+import type { JobDetail, CompanyDetail, PersonDetail, PersonList, SkillsMatrix, AnalyticsOverview, HeatmapData, GlobalPersonList, CostSummary, AnalysisRun, QASummary, QAIssueList, QAReanalyzeResult } from './types'
 
 export function usePollingJob(jobId: string | null, intervalMs = 60000) {
   const [job, setJob] = useState<JobDetail | null>(null)
@@ -238,4 +238,57 @@ export function useCostSummary(days = 30) {
   }, [days])
 
   return { data, loading }
+}
+
+export function useQASummary(companyId?: string) {
+  const [data, setData] = useState<QASummary | null>(null)
+  const [loading, setLoading] = useState(false)
+
+  useEffect(() => {
+    setLoading(true)
+    const params: Record<string, string> = {}
+    if (companyId) params.company_id = companyId
+    api
+      .get<QASummary>('/qa/summary', { params })
+      .then(({ data }) => setData(data))
+      .catch(console.error)
+      .finally(() => setLoading(false))
+  }, [companyId])
+
+  return { data, loading }
+}
+
+export async function qaReanalyze(
+  filters: { company_id?: string; status?: string; issue_type?: string },
+): Promise<QAReanalyzeResult> {
+  const { data } = await api.post<QAReanalyzeResult>('/qa/reanalyze', filters)
+  return data
+}
+
+export function useQAIssues(
+  companyId?: string,
+  status?: string,
+  issueType?: string,
+  page = 1,
+  pageSize = 50,
+) {
+  const [data, setData] = useState<QAIssueList | null>(null)
+  const [loading, setLoading] = useState(false)
+
+  const refresh = useCallback(() => {
+    setLoading(true)
+    const params: Record<string, string | number> = { page, page_size: pageSize }
+    if (companyId) params.company_id = companyId
+    if (status) params.status = status
+    if (issueType) params.issue_type = issueType
+    api
+      .get<QAIssueList>('/qa/issues', { params })
+      .then(({ data }) => setData(data))
+      .catch(console.error)
+      .finally(() => setLoading(false))
+  }, [companyId, status, issueType, page, pageSize])
+
+  useEffect(() => { refresh() }, [refresh])
+
+  return { data, loading, refresh }
 }

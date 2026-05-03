@@ -249,3 +249,46 @@ export interface CostSummary {
   cost_over_time: DailyCost[]
   token_totals: TokenTotals
 }
+
+// QA types
+
+export interface QAIssueItem {
+  person_id: string
+  person_name: string
+  company_id: string
+  company_name: string | null
+  status: 'failed' | 'flagged' | 'clean'
+  hard_failures: string[]
+  soft_warnings: string[]
+}
+
+export interface QAIssueList {
+  items: QAIssueItem[]
+  total: number
+  total_failed: number
+  total_flagged: number
+  total_clean: number
+  page: number
+  page_size: number
+}
+
+export interface QAThresholds {
+  max_l1_categories: number
+  max_declared_capabilities: number
+  max_inferred: number
+  max_topics: number
+}
+
+export interface QASummary {
+  total_analyzed: number
+  total_failed: number
+  total_flagged: number
+  total_clean: number
+  issue_type_counts: Record<string, number>
+  thresholds: QAThresholds
+}
+
+export interface QAReanalyzeResult {
+  queued: number
+  companies: string[]
+}
