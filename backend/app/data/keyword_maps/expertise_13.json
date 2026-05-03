@@ -1,0 +1,68 @@
+{
+  "Revenue Growth": [
+    "revenue growth", "revenue", "sales", "commercial", "pricing", "go-to-market",
+    "market expansion", "customer acquisition", "new market", "top-line", "growth strategy",
+    "business development", "salesforce", "key account", "customer segmentation",
+    "channel strategy", "new product", "market entry", "crm", "quota", "pipeline"
+  ],
+  "Operational Improvements": [
+    "operational", "operations", "process improvement", "performance improvement",
+    "lean", "supply chain", "productivity", "cost reduction", "transformation",
+    "turnaround", "interim management", "performance", "value creation", "kpi", "execution"
+  ],
+  "Finance and Accounting": [
+    "finance", "financial", "accounting", "cfo", "tax", "audit", "treasury",
+    "financial reporting", "financial planning", "financial analysis", "valuation",
+    "p&l", "budget", "cash flow", "balance sheet", "forensic", "economic damage"
+  ],
+  "Marketing": [
+    "marketing", "brand", "digital marketing", "customer engagement", "media",
+    "advertising", "campaign", "market research", "consumer insight",
+    "e-commerce", "omnichannel", "customer experience", "demand generation"
+  ],
+  "People and Talent": [
+    "human resources", "hr ", "talent", "workforce", "organizational",
+    "compensation", "benefits", "people", "change management", "culture",
+    "leadership development", "coaching", "executive coaching", "training",
+    "learning", "employee", "team building", "recruitment"
+  ],
+  "Technology": [
+    "technology", "it ", "digital", "software", "data analytics", "analytics",
+    "cybersecurity", "information security", "erp", "sap", "cloud", "automation",
+    "artificial intelligence", "machine learning", "data science", "big data",
+    "digital transformation", "saas"
+  ],
+  "M&A and Corporate Development": [
+    "m&a", "merger", "acquisition", "due diligence", "corporate development",
+    "transaction", "restructuring", "integration", "carve-out", "divestiture",
+    "joint venture", "private equity", "investment banking", "deal",
+    "post-merger", "distressed", "insolvency", "bankruptcy"
+  ],
+  "Real Estate & Assets": [
+    "real estate", "property", "infrastructure", "asset management",
+    "facilities", "construction", "commercial real estate"
+  ],
+  "R&D": [
+    "research and development", "r&d", "innovation", "product development",
+    "research", "scientific", "intellectual property", "clinical", "pharmaceutical",
+    "biotech", "life sciences"
+  ],
+  "Environment (ESG)": [
+    "environment", "sustainability", "climate", "esg", "green", "carbon",
+    "net zero", "renewable", "energy transition", "environmental"
+  ],
+  "Governance (ESG)": [
+    "governance", "compliance", "regulatory", "risk management", "risk",
+    "board", "internal audit", "corporate governance", "ethics", "fraud",
+    "investigations", "anti-bribery", "aml", "sanctions", "financial crimes"
+  ],
+  "Social (ESG)": [
+    "social", "community", "csr", "corporate social responsibility",
+    "social impact", "dei", "inclusion", "human rights", "health and safety"
+  ],
+  "Legal": [
+    "legal", "litigation", "dispute", "arbitration", "compliance",
+    "contract", "intellectual property", "law", "attorney", "counsel",
+    "regulatory"
+  ]
+}
