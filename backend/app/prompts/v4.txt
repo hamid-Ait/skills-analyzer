@@ -58,23 +58,63 @@ A useful test: if removing the item from a firm's capabilities page would make t
 
 ---
 
-## LAYER 2: Inferred Functional Expertise (0-5)
+## LAYER 2: Inferred Functional Expertise (0-7, two tiers)
 
 **Layer 2 is INFERENCE ONLY. It must never contain text copied from the profile.**
 
 The test for each candidate is: *"Did I read this label in the profile, or did I deduce it from what the profile implies?"* If you read it — it is explicit. Explicit items belong in Layer 1, Layer 1.5, or Layer 3. Only genuinely deduced capabilities belong in Layer 2.
 
-**MANDATORY SELF-CHECK — run this exact procedure for every candidate:**
+Layer 2 is split into two tiers with separate sourcing rules and caps. The goal is to produce a realistic 4–7 inferred capabilities for experienced professionals, while keeping hallucination risk low.
+
+---
+
+### Tier A — Structural Inferences (0-3)
+
+Structural inferences are role-standard capabilities that any senior professional at that level *must* possess by virtue of their function and seniority — deduced without requiring a specific profile phrase.
+
+**Eligibility:** apply only when ALL hold:
+- Role title is Partner, Director, MD, VP, Principal, C-suite (CFO, CRO, COO, CMO, CTO, CHRO, CLO, CSO, CEO), or equivalent (e.g., "Head of …", "Senior Vice President")
+- The inferred capability is a well-established, universal expectation for that function at that seniority — not speculative, not niche
+- The item is absent from `explicit_expertise_13` and `declared_narrow_capabilities`
+
+**Confidence threshold:** seniority signal alone (≥1 criterion) is sufficient for Tier A. You do not need a specific project or quantifiable result.
+
+**Cap:** ≤3 structural inferences per profile.
+
+**Tier A examples by function:**
+
+| Role / Function | Valid structural inferences |
+|---|---|
+| CFO / Finance Director / CRO | Financial Planning & Analysis, Cash Flow Management, Financial Reporting & Controls |
+| M&A Partner / MD (deal advisory) | Deal Origination, Portfolio Company Oversight, Transaction Structuring |
+| Operations Director / COO | Process Redesign, Cross-functional Change Management, Operational KPI Management |
+| HR Director / CHRO | Talent Acquisition Strategy, Performance Management, Organisational Design |
+| CMO / Marketing Director | Brand Strategy, Demand Generation, Customer Insight & Segmentation |
+| General Management / CEO | Stakeholder Management, P&L Ownership, Business Unit Leadership |
+| Technology Director / CTO | IT Architecture Oversight, Vendor & Contract Management, Digital Roadmap Planning |
+| Legal Counsel / CLO | Contract Negotiation, Risk & Compliance Management, Legal Entity Governance |
+
+Only use this table as illustrative examples — apply judgment for functions not listed. Do NOT over-infer: a "Manager" or "Analyst" title does not qualify for Tier A.
+
+**Evidence field for Tier A:** cite the title or seniority signal as the sole trigger (`{"source": "title", "text": "CFO, genomics scale-up"}`). This is expected and correct.
+
+---
+
+### Tier B — Evidence-Based Inferences (0-4)
+
+Evidence-based inferences are capabilities deduced from concrete profile content — specific phrases in the bio, experience, quantifiable results, or industry-specific context that imply a functional capability not declared in L1 or L1.5.
+
+**MANDATORY SELF-CHECK — run this exact procedure for every Tier B candidate:**
 
 1. Search for the candidate phrase (or its core compound words) in **declared fields only**: `linkedin_headline`, `linkedin_summary`, `linkedin_skills`, `website_capabilities`.
 
    **Do NOT search `bio`, `title`, `department`, or `linkedin_experience` for this check.** Those are narrative fields that describe what was done — they are sources of inference triggers, not capability declarations. A phrase appearing in a career narrative does not make it explicit; it makes it a strong trigger for inference.
 
-2. **If the phrase is ABSENT from all declared fields** → it may qualify for Layer 2 (proceed to condition checks below).
+2. **If the phrase is ABSENT from all declared fields** → it may qualify for Tier B (proceed to condition checks below).
 
 3. **If the phrase IS found in a declared field** (exact, reordered, compound words present, synonym, or skill tag):
    - Ask: *"Is this candidate a meaningfully more specific technique or sub-activity, derived from concrete evidence — NOT just a decorated version of what's in the declared field?"*
-   - **If YES (genuine elaboration)** → it may still qualify for Layer 2. See elaboration test below.
+   - **If YES (genuine elaboration)** → it may still qualify for Tier B. See elaboration test below.
    - **If NO (copy or near-copy)** → STOP. Route to Layer 1.5 (if declared capability) or Layer 3 (if sub-topic).
 
 **What counts as "found" in a declared field:**
@@ -100,20 +140,26 @@ The test for each candidate is: *"Did I read this label in the profile, or did I
 - ❌ WRONG: profile says "post-merger integration" → Layer 2: `"Post-Merger Integration"` — verbatim
 - ✅ CORRECT: profile describes "led 4 acquisitions at PE-backed firm, overseeing day-1 readiness" → Layer 2: `"Post-Merger Integration"` — deduced from acquisition leadership evidence
 
-A capability qualifies for Layer 2 ONLY if ALL THREE conditions hold:
-
-- **(a) ABSENT from `explicit_expertise_13` and `declared_narrow_capabilities`.**
-- **(b) PASSES the mandatory self-check above** — either absent from every profile field, or passes the elaboration test.
-- **(c) DERIVED** from seniority, quantifiable results, or role-standard expectations, with ≥1 supporting phrase from `bio`, `title`, `department`, or `linkedin_*` fields.
-
-Use precise labels (e.g., "Distressed Asset Turnaround", not "Turnaround").
-
-**Confidence threshold**: include only if at least two of the following hold:
+**Confidence threshold for Tier B:** include only if at least two of the following hold:
 - Seniority signal (Director/Partner/VP+)
 - Quantifiable result (e.g., "increased EBITDA by 30%")
 - Industry-standard role expectation (e.g., "CFO" → "Financial Planning & Analysis")
+- Specific project or engagement evidence in bio/experience (e.g., "led carve-out of manufacturing division")
 
-If `explicit_expertise_13` is empty, Layer 2 may still be populated based on seniority and role-standard expectations alone. **If more than 5 matches**, keep highest-confidence only.
+**Cap:** ≤4 evidence-based inferences per profile.
+
+---
+
+### Combined Layer 2 rules
+
+A capability qualifies for Layer 2 ONLY if it meets the conditions for Tier A OR Tier B above, AND:
+
+- **(a) ABSENT from `explicit_expertise_13` and `declared_narrow_capabilities`.**
+- **(b) Passes the self-check** (Tier B) OR is a structurally justified role-standard expectation (Tier A).
+
+Use precise labels (e.g., "Distressed Asset Turnaround", not "Turnaround").
+
+**Total cap: 7** (≤3 Tier A + ≤4 Tier B). If `explicit_expertise_13` is empty, Layer 2 may still be populated based on seniority and role-standard expectations alone. **If more than 7 matches**, keep highest-confidence only — Tier A items first, then Tier B by confidence.
 
 ---
 
@@ -302,7 +348,7 @@ Omit a key entirely if its array is empty.
 		"matched_sectors": ["string"],
 		"geographies": ["string"],
 		"inferred_expertise_functional": ["string"],
-		"inference_reasoning": "string (1-3 sentences naming each inferred capability + trigger; non-empty if inferred_expertise_functional is non-empty)",
+		"inference_reasoning": "string (1-3 sentences naming each inferred capability + trigger; label Tier A items as role-standard; non-empty if inferred_expertise_functional is non-empty)",
 		"topic_overlap": ["string"],
 		"evidence_map": {
 		"categories": {"<category>": [{"source": "string", "text": "string"}]},
@@ -329,7 +375,7 @@ Verify each object passes:
 - [ ] `primary_expertise` is an EXACT string from `<expertise>`; sector names ("Pharmaceuticals & Life Sciences", "Healthcare", "Financial Services", etc.) are INVALID; `justification` is a non-empty 1-sentence string citing a tiebreak rule
 - [ ] `explicit_expertise_13` — every item is an EXACT string from `<expertise>` (e.g. "Strategy", "Consulting", "Advisory", "Management", "Healthcare" are all INVALID); ≤4 items; sorted alphabetically
 - [ ] `declared_narrow_capabilities` — ≤8 items; no overlap with `explicit_expertise_13`; sorted alphabetically
-- [ ] `inferred_expertise_functional` — ≤5 items; no overlap with `explicit_expertise_13` or `declared_narrow_capabilities`; every item either (a) does not appear in any profile field, or (b) is a meaningfully more specific elaboration passing the elaboration test — NOT a verbatim copy or near-copy; if an item fails this check, move it to Layer 1.5 or Layer 3
+- [ ] `inferred_expertise_functional` — ≤7 items total (≤3 Tier A structural + ≤4 Tier B evidence-based); no overlap with `explicit_expertise_13` or `declared_narrow_capabilities`; Tier B items must either (a) not appear in any declared field, or (b) pass the elaboration test — NOT verbatim copies or near-copies; Tier A items must cite a seniority signal as trigger; if a Tier B item fails its check, move it to Layer 1.5 or Layer 3
 - [ ] `inference_reasoning` non-empty if `inferred_expertise_functional` non-empty
 - [ ] `topic_overlap` — ≤20 items; no verbatim copies from other layers; sorted alphabetically
 - [ ] `matched_sectors` — every item is an EXACT string from `<matched_sectors>`; sorted alphabetically; **must be consistent with `evidence_map.matched_sectors`** — every key in `evidence_map.matched_sectors` must also appear in `matched_sectors` (if you recorded sector evidence, commit it to the output array; do not leave `matched_sectors: []` while `evidence_map.matched_sectors` is non-empty); **no values borrowed from `<sectors>` or from profile text** — "Technology & Software", "Financial Services", "Enterprise Software", "SaaS", "Technology", "Computing" etc. are all INVALID here; map them to the correct `<matched_sectors>` string (e.g. `Computing, Technology, Robotics & AI`)
@@ -365,8 +411,8 @@ Website Industries: Healthcare, Pharmaceuticals
     "sectors": ["healthcare", "pharmaceuticals"],
     "matched_sectors": ["Healthcare, Medical & Social Care", "Pharmaceutical"],
     "geographies": ["Europe"],
-    "inferred_expertise_functional": ["Capital Raising & Investor Relations", "EBITDA Improvement Programs", "Value-Based Pricing Implementation"],
-    "inference_reasoning": "Capital Raising inferred from CFO role leading a €40M Series C round. EBITDA Improvement inferred from quantified 28% EBITDA gain. Value-Based Pricing Implementation is a more specific elaboration of declared 'Pricing & Revenue Optimization', supported by oncology portfolio pricing work — passes the elaboration test (specific technique not stated in profile).",
+    "inferred_expertise_functional": ["Financial Planning & Analysis", "Capital Raising & Investor Relations", "EBITDA Improvement Programs", "Value-Based Pricing Implementation"],
+    "inference_reasoning": "Financial Planning & Analysis: Tier A structural inference — Partner-level role at a firm where bio confirms prior CFO function; role-standard expectation for that seniority and function. Capital Raising: Tier B — CFO led a €40M Series C round (seniority + specific engagement evidence). EBITDA Improvement: Tier B — quantified 28% EBITDA gain in bio (quantifiable result + seniority signal). Value-Based Pricing Implementation: Tier B elaboration of declared 'Pricing & Revenue Optimization', supported by oncology portfolio pricing work — specific technique not stated in profile.",
     "topic_overlap": ["Commercial Integration", "Diagnostics M&A", "Oncology Pricing", "Revenue Cycle Redesign", "Series C Fundraising", "TAM Assessment"],
     "evidence_map": {
       "categories": {
@@ -393,6 +439,7 @@ Website Industries: Healthcare, Pharmaceuticals
         "Pharmaceutical": [{"source": "bio", "text": "oncology portfolio at a top-10 pharma"}]
       },
       "inferred": {
+        "Financial Planning & Analysis": [{"source": "title", "text": "Partner — prior CFO at genomics scale-up (Tier A structural)"}],
         "Capital Raising & Investor Relations": [{"source": "bio", "text": "CFO led a €40M Series C round"}],
         "EBITDA Improvement Programs": [{"source": "bio", "text": "improved EBITDA by 28%"}],
         "Value-Based Pricing Implementation": [{"source": "bio", "text": "pricing strategy for an oncology portfolio"}]
