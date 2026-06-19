@@ -1,10 +1,11 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import {
   Box, Typography, Tabs, Tab, Button, CircularProgress, Breadcrumbs, Link,
   ToggleButtonGroup, ToggleButton, TextField, Pagination,
   Menu, MenuItem, ListItemIcon, ListItemText, Snackbar, Alert,
   Dialog, DialogTitle, DialogContent, DialogActions,
+  FormControl, InputLabel, Select,
 } from '@mui/material'
 import { ArrowBack, ViewList, ViewModule, Refresh, RestartAlt, Psychology, LinkedIn, AutoFixHigh, Warning, PlayArrow } from '@mui/icons-material'
 import api from '../api/client'
@@ -13,7 +14,7 @@ import ExportButton from '../components/ExportButton'
 import PeopleTable from '../components/PeopleTable'
 import PeopleCards from '../components/PeopleCards'
 import SkillsMatrix from '../components/SkillsMatrix'
-import { useCompany, usePeople } from '../api/hooks'
+import { useCompany, usePeople, useProviders } from '../api/hooks'
 
 function PeopleCardView({ companyId }: { companyId: string }) {
   const [page, setPage] = useState(1)
@@ -61,15 +62,32 @@ export default function CompanyDetailPage() {
   const [viewMode, setViewMode] = useState<'table' | 'cards'>('table')
 
   const { company, loading } = useCompany(companyId || null)
+  const providerList = useProviders()
   const [retryAnchor, setRetryAnchor] = useState<null | HTMLElement>(null)
   const [retryLoading, setRetryLoading] = useState(false)
   const [snack, setSnack] = useState<{ msg: string; severity: 'success' | 'error' } | null>(null)
   const [confirmMode, setConfirmMode] = useState<string | null>(null)
+  const [reanalyzeOpen, setReanalyzeOpen] = useState(false)
+  const [reanalyzeProvider, setReanalyzeProvider] = useState('')
+  const [reanalyzeModel, setReanalyzeModel] = useState('')
 
-  const doRetry = async (mode: string) => {
+  useEffect(() => {
+    if (providerList.length > 0 && !reanalyzeProvider) {
+      const first = providerList[0]
+      setReanalyzeProvider(first.provider)
+      setReanalyzeModel(first.default_model ?? '')
+    }
+  }, [providerList])
+
+  useEffect(() => {
+    const info = providerList.find((p) => p.provider === reanalyzeProvider)
+    setReanalyzeModel(info?.default_model ?? '')
+  }, [reanalyzeProvider])
+
+  const doRetry = async (mode: string, extra?: { provider?: string; model?: string }) => {
     setRetryLoading(true)
     try {
-      const { data } = await api.post(`/companies/${companyId}/retry`, { mode })
+      const { data } = await api.post(`/companies/${companyId}/retry`, { mode, ...extra })
       setSnack({ msg: data.message, severity: 'success' })
     } catch (err: any) {
       setSnack({ msg: err.response?.data?.detail || 'Retry failed', severity: 'error' })
@@ -82,6 +100,8 @@ export default function CompanyDetailPage() {
     setRetryAnchor(null)
     if (mode === 'rescrape') {
       setConfirmMode(mode)
+    } else if (mode === 'reanalyze') {
+      setReanalyzeOpen(true)
     } else {
       doRetry(mode)
     }
@@ -229,6 +249,51 @@ export default function CompanyDetailPage() {
             onClick={() => { setConfirmMode(null); doRetry('rescrape') }}
           >
             Refresh
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      {/* Re-analyze with LLM selector dialog */}
+      <Dialog open={reanalyzeOpen} onClose={() => setReanalyzeOpen(false)} maxWidth="xs" fullWidth>
+        <DialogTitle sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+          <Psychology color="primary" />
+          Re-analyze all profiles
+        </DialogTitle>
+        <DialogContent sx={{ display: 'flex', flexDirection: 'column', gap: 2, pt: 2 }}>
+          <Typography variant="body2" color="text.secondary">
+            Choose the LLM to use for expertise classification of all {company?.people_count || 0} profiles.
+            Existing analysis will be cleared.
+          </Typography>
+          <FormControl fullWidth size="small">
+            <InputLabel>Provider</InputLabel>
+            <Select
+              value={reanalyzeProvider}
+              label="Provider"
+              onChange={(e) => setReanalyzeProvider(e.target.value)}
+            >
+              {providerList.map((p) => (
+                <MenuItem key={p.provider} value={p.provider}>{p.provider}</MenuItem>
+              ))}
+            </Select>
+          </FormControl>
+          <TextField
+            size="small"
+            label="Model (optional)"
+            value={reanalyzeModel}
+            onChange={(e) => setReanalyzeModel(e.target.value)}
+            helperText="Leave as default or enter a specific model name"
+          />
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setReanalyzeOpen(false)}>Cancel</Button>
+          <Button
+            variant="contained"
+            onClick={() => {
+              setReanalyzeOpen(false)
+              doRetry('reanalyze', { provider: reanalyzeProvider, model: reanalyzeModel || undefined })
+            }}
+          >
+            Re-analyze
           </Button>
         </DialogActions>
       </Dialog>
