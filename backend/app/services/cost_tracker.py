@@ -13,6 +13,7 @@ TOKEN_PRICING: dict[str, tuple[float, float]] = {
     "claude-sonnet-4-20250514": (3.0, 15.0),
     # GPT-4o-mini
     "gpt-4o-mini": (0.15, 0.60),
+    "gpt-5-mini" : (0.25, 2.0),
     # Gemini 2.5 Flash
     "gemini-2.5-flash": (0.30, 2.50),
     # DeepSeek Chat (cache-miss input price)

@@ -37,6 +37,19 @@ export interface JobDetail extends JobBrief {
   companies: CompanyBrief[]
 }
 
+export interface EvidenceEntry {
+  source: string
+  text: string
+}
+
+export interface ExpertiseEvidence {
+  categories?: Record<string, EvidenceEntry[]>
+  sectors?: Record<string, EvidenceEntry[]>
+  matched_sectors?: Record<string, EvidenceEntry[]>
+  inferred?: Record<string, EvidenceEntry[]>
+  topics?: Record<string, EvidenceEntry[]>
+}
+
 export interface PersonBrief {
   id: string
   name: string
@@ -58,13 +71,22 @@ export interface PersonDetail extends PersonBrief {
   twitter_url: string | null
   other_url: string | null
   profile_url: string | null
+  source_url: string | null
+  extra: Record<string, unknown> | null
   justification: string | null
+  matched_sector: string[] | null
   geography: string | null
   inferred_expertise_functional: string[] | null
+  inference_reasoning: string | null
   matched_inferred_expertise_topics: string[] | null
   linkedin_headline: string | null
+  linkedin_summary: string | null
   linkedin_experience_summary: string | null
+  linkedin_skills: string[] | null
+  linkedin_enriched: boolean
+  expertise_evidence: ExpertiseEvidence | null
   data_source: string | null
+  profile_enriched: boolean
   created_at: string
   updated_at: string
 }
@@ -160,6 +182,31 @@ export interface GlobalPersonList {
   page_size: number
 }
 
+// Analysis run / comparison types
+
+export interface AnalysisRunResult {
+  name?: string | null
+  primary_expertise?: string | null
+  justification?: string | null
+  explicit_expertise_13?: string[] | null
+  inferred_expertise_functional?: string[] | null
+  inference_reasoning?: string | null
+  topic_overlap?: string[] | null
+  sectors?: string[] | null
+  matched_sectors?: string[] | null
+  geographies?: string[] | null
+  evidence_map?: ExpertiseEvidence | null
+}
+
+export interface AnalysisRun {
+  id: string
+  provider: string
+  model: string | null
+  version: number
+  result: AnalysisRunResult
+  created_at: string
+}
+
 // Cost monitoring types
 
 export interface ServiceCost {
@@ -201,4 +248,47 @@ export interface CostSummary {
   cost_by_step: StepCost[]
   cost_over_time: DailyCost[]
   token_totals: TokenTotals
+}
+
+// QA types
+
+export interface QAIssueItem {
+  person_id: string
+  person_name: string
+  company_id: string
+  company_name: string | null
+  status: 'failed' | 'flagged' | 'clean'
+  hard_failures: string[]
+  soft_warnings: string[]
+}
+
+export interface QAIssueList {
+  items: QAIssueItem[]
+  total: number
+  total_failed: number
+  total_flagged: number
+  total_clean: number
+  page: number
+  page_size: number
+}
+
+export interface QAThresholds {
+  max_l1_categories: number
+  max_declared_capabilities: number
+  max_inferred: number
+  max_topics: number
+}
+
+export interface QASummary {
+  total_analyzed: number
+  total_failed: number
+  total_flagged: number
+  total_clean: number
+  issue_type_counts: Record<string, number>
+  thresholds: QAThresholds
+}
+
+export interface QAReanalyzeResult {
+  queued: number
+  companies: string[]
 }

@@ -1,13 +1,16 @@
 import logging
+import time
 from datetime import datetime, timezone
 
+from app.config import settings
 from app.tasks.celery_app import celery_app
 from app.config import settings
 from app.database import SessionLocal
 from app.models import Job, Company, Person
 from app.services.expertise_analyzer import (
-    format_people_for_analysis, get_provider,
+    format_people_for_analysis, get_provider, get_provider_by_name,
     _parse_llm_response, _normalize_name,
+    EXPERTISE_SYSTEM_PROMPT, SECTOR_VOCAB, EXPERTISE_CATEGORIES,
 )
 from app.services.keyword_matcher import match_person_from_db
 from app.services.expertise_merger import merge, merge_keyword_only
@@ -17,9 +20,192 @@ log = logging.getLogger(__name__)
 
 BATCH_SIZE = 10
 
+# ── Post-processing category filter ──────────────────────────────────────────
+# The LLM over-applies several Layer 1 categories by reasoning from seniority
+# rather than explicit profile evidence. This filter strips a category unless
+# at least one of its required keywords appears in the combined profile text.
+_CATEGORY_KEYWORDS: dict[str, list[str]] = {
+    "R&D": [
+        # Must indicate the person directly does or leads research/product development
+        "r&d", "research and development", "research lab", "patent",
+        "innovation pipeline", "r & d",
+    ],
+    "People and Talent": [
+        # Must indicate an HR/talent/people advisory focus — not just mentioning people
+        # Covers both specialist HR firms and consulting practice-group language
+        # Practice-group language (consulting firms)
+        "people & organization", "people and organization",
+        "talent management practice", "talent advisory",
+        "human resources practice", "hr practice", "hr leader",
+        "people chair", "people practice", "people lead",
+        "chief people officer", "chief human resources",
+        "workforce planning", "people officer",
+        "organizational effectiveness practice", "talent practice",
+        # Direct HR vocabulary (specialist HR firms and in-house HR leaders)
+        "human resources", "hr consultant", "hr director", "hr manager",
+        "hr business partner", "hrbp", "hr transformation", "hr advisory",
+        "talent acquisition", "talent development", "talent management",
+        "recruitment", "executive search", "headhunting",
+        "learning and development", "l&d", "training and development",
+        "employee relations", "employee engagement",
+        "organizational development", "organisation development",
+        "people analytics", "workforce analytics",
+        "people director", "hr specialist", "hr generalist",
+        "compensation and benefits", "total rewards",
+        "diversity, equity", "diversity and inclusion",
+        "succession planning", "performance management",
+    ],
+    "Environment (ESG)": [
+        # Must indicate ESG/sustainability advisory focus — not firm-wide mentions
+        "climate practice", "sustainability practice",
+        "climate & sustainability", "climate and sustainability",
+        "esg practice", "esg reporting", "esg advisory",
+        "decarbonization", "decarbonisation", "net-zero", "net zero",
+        "nature-positive", "environmental advisory",
+    ],
+    "Social (ESG)": [
+        # Must indicate explicit social impact or DEI advisory work
+        "social impact", "social responsibility", "social practice",
+        "dei practice", "diversity, equity", "diversity and inclusion",
+        "community impact",
+    ],
+    "Governance (ESG)": [
+        # Must indicate explicit governance advisory — not generic governance mentions
+        "board governance", "esg governance", "governance framework",
+        "governance architecture", "audit committee",
+        "corporate governance advisory", "esg reporting",
+    ],
+    "Legal": [
+        # Must indicate legal advisory or in-house legal work
+        "general counsel", "chief legal", "legal officer",
+        "litigation", "law firm", "legal practice", "legal advisory",
+        "in-house counsel", "legal and regulatory",
+    ],
+}
 
-def _build_person_entry(p: Person) -> dict:
+
+_VALID_SECTORS: set[str] = set(SECTOR_VOCAB)
+
+# Reverse mapping: matched sector → canonical parent sector in SECTOR_VOCAB
+# Used to enforce coupling — if a matched sector is present, its parent must be too
+_MATCHED_TO_PARENT_SECTOR: dict[str, str] = {
+    "Healthcare, Medical & Social Care":                    "Healthcare",
+    "Pharmaceutical":                                       "Pharmaceuticals & Life Sciences",
+    "Life Sciences":                                        "Pharmaceuticals & Life Sciences",
+    "Financial, Investment and Insurance Services":         "Financial Services",
+    "Consumer":                                             "Consumer & Retail",
+    "Wholesale, Retail & Hiring":                           "Consumer & Retail",
+    "Manufacturing and Product Development":                "Industrials & Manufacturing",
+    "Industrials":                                          "Industrials & Manufacturing",
+    "Computing, Technology, Robotics & AI":                 "Technology & Software",
+    "Real Estate & Property: Industrial, Commercial and Private": "Real Estate",
+    "Transportation and Logistics":                         "Transportation & Logistics",
+    "Education & Training":                                 "Education",
+    "Public Services":                                      "Government & Public Sector",
+    "Media, News, Publishing & Information Services":       "Media & Entertainment",
+    "Arts, Entertainment, Recreation, Sports":              "Media & Entertainment",
+    "Agriculture, Horticulture, Forestry & Fishing":        "Agriculture & Food",
+    "Food and Beverage":                                    "Food & Beverage",
+    "Automotive":                                           "Automotive",
+    "Energy":                                               "Energy & Utilities",
+    "Utilities":                                            "Energy & Utilities",
+}
+
+
+def _enforce_sector_coupling(sectors: list[str], matched: list[str], name: str) -> list[str]:
+    """Ensure every matched sector has a corresponding parent sector. Adds missing parents."""
+    sector_set = set(sectors)
+    for ms in matched:
+        parent = _MATCHED_TO_PARENT_SECTOR.get(ms)
+        if parent and parent not in sector_set:
+            sector_set.add(parent)
+            log.info("  %s: added missing parent sector '%s' for matched '%s'", name, parent, ms)
+    return sorted(sector_set)
+
+
+# Matched sectors with specific evidence requirements (same pattern as _CATEGORY_KEYWORDS)
+_MATCHED_SECTOR_KEYWORDS: dict[str, list[str]] = {
+    "Professional, Business & Support Services": [
+        "professional services", "business services", "consulting services",
+        "advisory services", "support services", "outsourcing",
+        "managed services", "staffing", "recruitment services",
+    ],
+}
+
+
+def _filter_sectors(sectors: list[str]) -> list[str]:
+    """Pass sectors through as-is — sectors are now free-text from the LLM."""
+    return sectors
+
+
+def _filter_matched_sectors(sectors: list[str], profile_text: str) -> list[str]:
+    """Strip matched sectors that lack keyword evidence (for over-applied ones)."""
+    filtered = []
+    for s in sectors:
+        keywords = _MATCHED_SECTOR_KEYWORDS.get(s)
+        if keywords is None:
+            filtered.append(s)
+        elif any(kw in profile_text for kw in keywords):
+            filtered.append(s)
+        else:
+            log.info("  Filtered matched sector '%s' — no keyword evidence", s)
+    return filtered
+
+
+def _profile_text(p: Person) -> str:
+    """Concatenate all searchable text fields for a person in lowercase."""
+    extra = p.extra or {}
+    parts = [
+        p.name or "",
+        p.title or "",
+        p.department or "",
+        p.bio or "",
+        p.linkedin_headline or "",
+        p.linkedin_summary or "",
+        p.linkedin_experience_summary or "",
+        " ".join(p.linkedin_skills or []),
+        " ".join(extra.get("expertise_industries") or []),
+        " ".join(extra.get("expertise_capabilities") or []),
+    ]
+    return " ".join(parts).lower()
+
+
+def _declared_text(p: Person) -> str:
+    """Concatenate only explicitly declared capability fields in lowercase.
+
+    Used for Layer 2 verbatim copy detection — narrative fields (bio,
+    experience summary) describe what was done and should not block
+    inference; only fields where capabilities are explicitly declared matter.
+    """
+    extra = p.extra or {}
+    parts = [
+        p.linkedin_headline or "",
+        p.linkedin_summary or "",
+        " ".join(p.linkedin_skills or []),
+        " ".join(extra.get("expertise_capabilities") or []),
+    ]
+    return " ".join(parts).lower()
+
+
+def _filter_categories(categories: list[str], profile_text: str) -> list[str]:
+    """Remove categories that lack keyword support in the profile text."""
+    filtered = []
+    for cat in categories:
+        keywords = _CATEGORY_KEYWORDS.get(cat)
+        if keywords is None:
+            # No restriction for this category — keep it
+            filtered.append(cat)
+        elif any(kw in profile_text for kw in keywords):
+            filtered.append(cat)
+        else:
+            log.debug("  Filtered out '%s' — no keyword evidence in profile", cat)
+    return filtered
+
+
+def _build_person_entry(p: Person, company_name: str = "") -> dict:
     """Build the data dict sent to the LLM for a single person."""
+    from app.services.taxonomy_resolver import resolve_company_taxonomy
+
     entry = {
         "name": p.name,
         "title": p.title,
@@ -35,6 +221,26 @@ def _build_person_entry(p: Person) -> dict:
         entry["linkedin_experience_summary"] = p.linkedin_experience_summary
     if p.linkedin_skills:
         entry["linkedin_skills"] = p.linkedin_skills
+    extra = p.extra or {}
+    if extra.get("expertise_industries"):
+        entry["website_industries"] = extra["expertise_industries"]
+    if extra.get("expertise_capabilities"):
+        entry["website_capabilities"] = extra["expertise_capabilities"]
+    if extra.get("education"):
+        entry["website_education"] = extra["education"]
+
+    if company_name:
+        hints = resolve_company_taxonomy(
+            company_name=company_name,
+            capabilities=entry.get("website_capabilities") or [],
+            industries=entry.get("website_industries") or [],
+        )
+        if hints:
+            if hints.get("l1_hints"):
+                entry["resolved_l1_hints"] = hints["l1_hints"]
+            if hints.get("sector_hints"):
+                entry["resolved_sector_hints"] = hints["sector_hints"]
+
     return entry
 
 
@@ -43,15 +249,27 @@ def _apply_result(person: Person, result: dict):
     person.primary_expertise = result.get("primary_expertise")
     person.justification = result.get("justification")
     # Support both old (matched_13_categories) and new (explicit_expertise_13) field names
-    person.matched_13_categories = (
+    categories = (
         result.get("explicit_expertise_13")
         or result.get("matched_13_categories", [])
     )
+    ptext = _profile_text(person)
+    person.matched_13_categories = _filter_categories(list(categories or []), ptext)
+
     # Sectors/geographies: new prompt returns arrays, DB column is Text
     sectors = result.get("sectors") or result.get("sector")
-    if isinstance(sectors, list):
-        sectors = "; ".join(sectors) if sectors else None
-    person.sector = sectors
+    if isinstance(sectors, str):
+        sectors = [s.strip() for s in sectors.split(";") if s.strip()]
+    sectors = _filter_sectors(list(sectors or []))
+    matched_sectors = result.get("matched_sectors") or []
+    if isinstance(matched_sectors, str):
+        matched_sectors = [s.strip() for s in matched_sectors.split(";") if s.strip()]
+    matched_sectors = _filter_matched_sectors(list(matched_sectors), ptext)
+    # Enforce coupling: add any parent sectors implied by matched sectors
+    # Sector coupling enforcement disabled — sectors are now free-text, not controlled vocab
+    # sectors = _enforce_sector_coupling(sectors, matched_sectors, person.name or "")
+    person.sector = "; ".join(sectors) if sectors else None
+    person.matched_sector = matched_sectors or None
     geographies = result.get("geographies") or result.get("geography")
     if isinstance(geographies, list):
         geographies = "; ".join(geographies) if geographies else None
@@ -60,16 +278,30 @@ def _apply_result(person: Person, result: dict):
     if isinstance(func, str):
         func = [f.strip() for f in func.split(",") if f.strip()]
     person.inferred_expertise_functional = func
+    person.inference_reasoning = result.get("inference_reasoning")
     person.matched_inferred_expertise_topics = (
         result.get("topic_overlap")
         or result.get("matched_inferred_expertise_topics", [])
     )
+    person.expertise_evidence = result.get("evidence_map") or None
     person.expertise_raw = result
+    if result.get("company_practice"):
+        person.department = result["company_practice"]
     person.updated_at = datetime.now(timezone.utc)
+
+    log.debug(
+        "  %s → primary=%s | 13=%d | functional=%d | topics=%d",
+        person.name,
+        person.primary_expertise,
+        len(person.matched_13_categories or []),
+        len(person.inferred_expertise_functional or []),
+        len(person.matched_inferred_expertise_topics or []),
+    )
 
 
 @celery_app.task(bind=True, max_retries=1, time_limit=72000)
-def analyze_expertise_batch(self, company_id: str, person_ids: list[str]):
+def analyze_expertise_batch(self, company_id: str, person_ids: list[str],
+                            provider_name: str | None = None, model: str | None = None):
     """Analyze expertise using hybrid keyword + LLM approach.
 
     For each batch:
@@ -99,18 +331,81 @@ def analyze_expertise_batch(self, company_id: str, person_ids: list[str]):
             keyword_results[norm] = match_person_from_db(p)
 
         # Step 2: Process in LLM batches
-        provider = get_provider()
+        provider = get_provider_by_name(provider_name, model=model) if provider_name else get_provider()
         total_updated = 0
-        total_batches = (len(people) + BATCH_SIZE - 1) // BATCH_SIZE
+        batch_size = provider.batch_size
+        total_batches = (len(people) + batch_size - 1) // batch_size
 
-        for batch_idx in range(0, len(people), BATCH_SIZE):
-            batch = people[batch_idx:batch_idx + BATCH_SIZE]
-            batch_num = batch_idx // BATCH_SIZE + 1
-            batch_data = [_build_person_entry(p) for p in batch]
-            text = format_people_for_analysis(batch_data)
+        # Log prompt fingerprint so we can verify the worker has the latest prompt
+        prompt_fingerprint = hash(EXPERTISE_SYSTEM_PROMPT) & 0xFFFFFFFF
+        has_layer2b = "LAYER 2b" in EXPERTISE_SYSTEM_PROMPT
+        log.info(
+            f"Prompt fingerprint: {prompt_fingerprint:#010x} | "
+            f"has_layer2b={has_layer2b} | "
+            f"provider={settings.LLM_PROVIDER} | "
+            f"people={len(people)} batch_size={batch_size} batches={total_batches}"
+        )
+
+        # Gemini free tier: 15 RPM. Space out calls to avoid 429s.
+        rate_limit_providers = {"gemini", "deepseek"}
+        min_interval = 4.5 if settings.LLM_PROVIDER in rate_limit_providers else 0
+        last_call_time = 0.0
+
+        for batch_idx in range(0, len(people), batch_size):
+            batch = people[batch_idx:batch_idx + batch_size]
+            batch_num = batch_idx // batch_size + 1
+            batch_data = [_build_person_entry(p, company_name=company.name if company else "") for p in batch]
+            text = format_people_for_analysis(batch_data, company_name=company.name if company else "")
 
             try:
-                raw_response = provider.analyze_batch(text)
+                if min_interval > 0:
+                    elapsed = time.monotonic() - last_call_time
+                    if elapsed < min_interval:
+                        time.sleep(min_interval - elapsed)
+
+                _valid_l1 = set(EXPERTISE_CATEGORIES)
+                _expected_fields = [
+                    "primary_expertise", "explicit_expertise_13",
+                    "inferred_expertise_functional", "topic_overlap",
+                    "sectors", "geographies",
+                ]
+
+                def _collect_validation_errors(results: list[dict]) -> list[str]:
+                    errors = []
+                    if not results:
+                        errors.append("Empty result array — expected one object per person")
+                        return errors
+                    first = results[0]
+                    missing = [f for f in _expected_fields if f not in first]
+                    if missing:
+                        errors.append(f"Missing fields in output: {missing}")
+                    for r in results:
+                        bad_l1 = [
+                            v for v in (r.get("explicit_expertise_13") or [])
+                            if v not in _valid_l1
+                        ]
+                        if bad_l1:
+                            errors.append(
+                                f"{r.get('name', '?')}: explicit_expertise_13 contains "
+                                f"non-taxonomy values: {bad_l1}"
+                            )
+                    return errors
+
+                # Call LLM with retry — backoff on 429, error-context on validation failure
+                max_retries = 3
+                retry_text = text
+                for attempt in range(max_retries + 1):
+                    last_call_time = time.monotonic()
+                    try:
+                        raw_response = provider.analyze_batch(retry_text)
+                        break
+                    except Exception as retry_exc:
+                        if "429" in str(retry_exc) and attempt < max_retries:
+                            wait = min(15 * (2 ** attempt), 120)
+                            log.warning(f"  Batch {batch_num}: rate limited, retrying in {wait}s")
+                            time.sleep(wait)
+                        else:
+                            raise
 
                 # Log LLM usage
                 if provider.last_usage:
@@ -125,6 +420,35 @@ def analyze_expertise_batch(self, company_id: str, person_ids: list[str]):
                     )
 
                 results = _parse_llm_response(raw_response)
+                log.info(f"  Batch {batch_num}: LLM returned {len(results)} results")
+
+                # Validate output — on error inject context and retry once
+                val_errors = _collect_validation_errors(results)
+                if val_errors:
+                    log.warning(
+                        f"  Batch {batch_num}: validation errors, retrying with error context: %s",
+                        val_errors,
+                    )
+                    error_note = (
+                        "\n\nPREVIOUS OUTPUT FAILED VALIDATION:\n"
+                        + "\n".join(f"- {e}" for e in val_errors)
+                        + "\nFix ONLY these issues and return the complete corrected JSON array."
+                    )
+                    retry_text = text + error_note
+                    last_call_time = time.monotonic()
+                    raw_response = provider.analyze_batch(retry_text)
+                    if provider.last_usage:
+                        log_usage(
+                            company_id=company_id,
+                            service="llm",
+                            provider=settings.LLM_PROVIDER,
+                            model=provider.last_usage.get("model"),
+                            pipeline_step="analysis_retry",
+                            input_tokens=provider.last_usage.get("input_tokens"),
+                            output_tokens=provider.last_usage.get("output_tokens"),
+                        )
+                    results = _parse_llm_response(raw_response)
+                    log.info(f"  Batch {batch_num}: retry returned {len(results)} results")
 
                 # Build name → LLM result mapping for this batch
                 llm_by_name: dict[str, dict] = {}
@@ -150,6 +474,36 @@ def analyze_expertise_batch(self, company_id: str, person_ids: list[str]):
 
                     kw_result = keyword_results.get(norm)
                     llm_result = llm_by_name.get(norm, {})
+
+                    if llm_result:
+                        ptext = _profile_text(person)
+
+                        # Post-process: strip categories without keyword evidence
+                        if llm_result.get("explicit_expertise_13"):
+                            original = llm_result["explicit_expertise_13"]
+                            filtered = _filter_categories(original, ptext)
+                            if len(filtered) != len(original):
+                                log.info(
+                                    "  %s: filtered categories %s",
+                                    person.name, set(original) - set(filtered),
+                                )
+                            llm_result = {**llm_result, "explicit_expertise_13": filtered}
+
+                        # Post-process: strip L2 items that appear verbatim in
+                        # declared fields (headline, summary, skills, capabilities).
+                        # Narrative fields (bio, experience) are inference triggers,
+                        # not capability declarations — they must not block L2.
+                        if llm_result.get("inferred_expertise_functional"):
+                            inferred = llm_result["inferred_expertise_functional"]
+                            dtext = _declared_text(person)
+                            clean = [i for i in inferred if i.lower() not in dtext]
+                            removed_v = set(inferred) - set(clean)
+                            if removed_v:
+                                log.info(
+                                    "  %s: stripped verbatim L2 items %s",
+                                    person.name, removed_v,
+                                )
+                            llm_result = {**llm_result, "inferred_expertise_functional": clean}
 
                     if kw_result and llm_result:
                         merged = merge(kw_result, llm_result)

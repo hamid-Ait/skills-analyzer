@@ -1,0 +1,23 @@
+{
+  "Latin America": [
+    "latin america", "latam", "brazil", "mexico", "colombia", "argentina",
+    "chile", "peru", "venezuela", "central america", "caribbean", "south america"
+  ],
+  "Europe": [
+    "europe", "european", "uk", "united kingdom", "germany", "france", "spain",
+    "italy", "netherlands", "belgium", "nordics", "scandinavia", "switzerland",
+    "austria", "poland", "czech", "iberia", "emea"
+  ],
+  "Middle East & Africa": [
+    "middle east", "mena", "africa", "gulf", "gcc", "saudi arabia", "uae",
+    "dubai", "abu dhabi", "qatar", "egypt", "nigeria", "kenya"
+  ],
+  "Asia Pacific": [
+    "asia pacific", "apac", "china", "india", "japan", "korea",
+    "southeast asia", "singapore", "australia", "hong kong", "taiwan",
+    "indonesia", "malaysia", "thailand", "vietnam"
+  ],
+  "North America": [
+    "north america", "united states", "canada", "us market"
+  ]
+}

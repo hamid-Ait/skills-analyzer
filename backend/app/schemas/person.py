@@ -31,8 +31,10 @@ class PersonDetail(PersonBrief):
     source_url: Optional[str] = None
     profile_enriched: bool = False
     justification: Optional[str] = None
+    matched_sector: Optional[list[str]] = None
     geography: Optional[str] = None
     inferred_expertise_functional: Optional[list[str]] = None
+    inference_reasoning: Optional[str] = None
     matched_inferred_expertise_topics: Optional[list[str]] = None
     linkedin_experience_summary: Optional[str] = None
     data_source: Optional[str] = None
@@ -42,6 +44,7 @@ class PersonDetail(PersonBrief):
     linkedin_education: Optional[Any] = None
     linkedin_skills: Optional[list[str]] = None
     linkedin_enriched: bool = False
+    expertise_evidence: Optional[dict[str, Any]] = None
     created_at: datetime
     updated_at: datetime
 

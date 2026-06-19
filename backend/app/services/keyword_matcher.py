@@ -44,6 +44,7 @@ _PRIMARY_PRIORITY = [
 @dataclass
 class KeywordResult:
     matched_13: list[str] = field(default_factory=list)
+    matched_13_keywords: dict[str, list[str]] = field(default_factory=dict)
     primary_expertise: str = "Management Consulting"
     sectors: list[str] = field(default_factory=list)
     geography: list[str] = field(default_factory=list)
@@ -82,6 +83,20 @@ def _match_against(text: str, keyword_map: dict[str, list[str]]) -> list[str]:
     return [cat for cat, keywords in keyword_map.items() if any(kw in text for kw in keywords)]
 
 
+def _match_against_with_keywords(
+    text: str, keyword_map: dict[str, list[str]]
+) -> tuple[list[str], dict[str, list[str]]]:
+    """Return matched categories and the specific keywords that triggered each match."""
+    matched_cats: list[str] = []
+    matched_kws: dict[str, list[str]] = {}
+    for cat, keywords in keyword_map.items():
+        hits = [kw for kw in keywords if kw in text]
+        if hits:
+            matched_cats.append(cat)
+            matched_kws[cat] = hits
+    return matched_cats, matched_kws
+
+
 def _select_primary(matched_13: list[str]) -> str:
     """Select a single primary expertise label using priority order."""
     for p in _PRIMARY_PRIORITY:
@@ -107,16 +122,16 @@ def match_person(
         education=education, raw_text=raw_text, bio=bio,
         title=title, department=department, skills=skills,
     )
-    m13 = _match_against(text, _EXPERTISE_13)
+    m13, m13_kws = _match_against_with_keywords(text, _EXPERTISE_13)
     functional = _match_against(text, _FUNCTIONAL_KW)
-    sectors = _match_against(text, _SECTOR_KW)
     geography = _match_against(text, _GEOGRAPHY_KW)
     primary = _select_primary(m13)
 
     return KeywordResult(
         matched_13=m13,
+        matched_13_keywords=m13_kws,
         primary_expertise=primary,
-        sectors=sectors,
+        sectors=[],  # Sectors are LLM-only — keyword matching causes too many false positives
         geography=geography,
         functional=functional,
     )

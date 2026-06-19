@@ -19,29 +19,67 @@ log = logging.getLogger(__name__)
 
 router = APIRouter()
 
+
 # (db_field, display_header) — order matches desired output
 EXPORT_COLUMNS = [
     ("image_url", "Photo"),
     ("name", "Name"),
     ("title", "Title"),
     ("_company_name", "Company / Practice"),
+    ("location", "Location"),
+    ("email", "Email"),
+    ("phone", "Phone"),
     ("linkedin_url", "LinkedIn URL"),
     ("linkedin_headline", "LinkedIn Headline"),
     ("primary_expertise", "Primary Expertise"),
     ("justification", "Justification (LinkedIn + Bio/Website)"),
     ("matched_13_categories", "Matched 13 Expertise Categories"),
     ("sector", "Sector"),
+    ("_matched_sector", "Matched Sector"),
     ("geography", "Geography"),
     ("inferred_expertise_functional", "Inferred Expertise (Functional)"),
+    ("inference_reasoning", "Inference Reasoning"),
     ("matched_inferred_expertise_topics", "Matched Inferred Expertise (Topics)"),
     ("linkedin_experience_summary", "LinkedIn Experience Summary"),
+    ("bio", "Bio"),
+    ("_website_industries", "Website Industries"),
+    ("_website_capabilities", "Website Capabilities"),
+    ("_website_education", "Website Education"),
     ("data_source", "Data Source"),
 ]
 
 EXPORT_HEADERS = [h for _, h in EXPORT_COLUMNS]
 
 # Column widths matching reference layout
-COLUMN_WIDTHS = [18, 24, 22, 38, 40, 40, 28, 65, 48, 40, 35, 65, 70, 60, 22]
+COLUMN_WIDTHS = [18, 24, 22, 38, 30, 32, 22, 40, 40, 28, 65, 48, 40, 50, 35, 65, 65, 70, 60, 80, 45, 45, 45, 22]
+
+
+def _extra_list(p, key: str) -> str | None:
+    """Read a list field from person.extra and join as semicolon-separated string."""
+    extra = getattr(p, 'extra', None) or {}
+    val = extra.get(key)
+    if not val:
+        return None
+    if isinstance(val, list):
+        return "; ".join(str(v) for v in val if v)
+    return str(val)
+
+
+def _extra_education(p) -> str | None:
+    """Render person.extra['education'] list-of-dicts as a readable string."""
+    extra = getattr(p, 'extra', None) or {}
+    edu = extra.get("education")
+    if not edu or not isinstance(edu, list):
+        return None
+    parts = []
+    for e in edu:
+        if isinstance(e, dict):
+            raw = e.get("raw") or ", ".join(filter(None, [e.get("degree"), e.get("institution"), e.get("year")]))
+            if raw:
+                parts.append(raw)
+        else:
+            parts.append(str(e))
+    return " | ".join(parts) if parts else None
 
 
 def _people_to_dicts(people, company_name: str = "") -> list[dict]:
@@ -50,7 +88,15 @@ def _people_to_dicts(people, company_name: str = "") -> list[dict]:
         row = {}
         for field, header in EXPORT_COLUMNS:
             if field == "_company_name":
-                val = company_name
+                val = getattr(p, 'department', None) or company_name
+            elif field == "_matched_sector":
+                val = getattr(p, 'matched_sector', None)
+            elif field == "_website_industries":
+                val = _extra_list(p, "expertise_industries")
+            elif field == "_website_capabilities":
+                val = _extra_list(p, "expertise_capabilities")
+            elif field == "_website_education":
+                val = _extra_education(p)
             else:
                 val = getattr(p, field, None)
             if isinstance(val, list):

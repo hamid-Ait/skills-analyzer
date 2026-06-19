@@ -1,0 +1,177 @@
+{
+  "Corporate Restructuring & Turnaround": [
+    "restructuring", "turnaround", "distressed", "insolvency", "bankruptcy",
+    "chapter 11", "administration", "receivership", "creditor advisory",
+    "debt restructuring", "out-of-court", "debtor-in-possession",
+    "corporate recovery", "financial recovery"
+  ],
+  "Forensic Accounting & Investigations": [
+    "forensic", "investigation", "fraud", "forensic accounting",
+    "financial investigation", "dispute analysis", "fraud examination",
+    "asset tracing", "embezzlement", "money laundering", "aml investigation",
+    "corruption investigation"
+  ],
+  "Litigation Support & Expert Witness": [
+    "litigation", "expert witness", "dispute", "arbitration", "damages",
+    "economic damage", "lost profits", "class action", "securities litigation",
+    "antitrust", "trial support", "deposition", "testimony"
+  ],
+  "Valuation": [
+    "valuation", "business valuation", "fair value", "purchase price allocation",
+    "ppa ", "goodwill impairment", "intangible asset", "equity valuation",
+    "discounted cash flow", "dcf ", "409a", "asc 350", "asc 805"
+  ],
+  "International Tax": [
+    "international tax", "cross-border tax", "transfer pricing", "tax treaty",
+    "pillar two", "pillar 2", "beps", "foreign tax credit",
+    "permanent establishment", "withholding tax", "tax planning"
+  ],
+  "Transfer Pricing": [
+    "transfer pricing", "arm's length", "intercompany pricing",
+    "oecd guidelines", "country-by-country", "advance pricing agreement", "apa "
+  ],
+  "State & Local Tax (SALT)": [
+    "state and local tax", "salt ", "state tax", "local tax", "sales tax",
+    "use tax", "property tax", "income tax nexus", "apportionment", "multistate"
+  ],
+  "Tax Controversy": [
+    "tax controversy", "tax dispute", "irs audit", "tax litigation",
+    "tax examination", "tax authority", "competent authority", "tax penalty"
+  ],
+  "Post-Merger Integration": [
+    "post-merger integration", "post-acquisition", "integration planning",
+    "day one readiness", "synergy capture", "synergy realization",
+    "integration workstream", "operating model integration"
+  ],
+  "Carve-outs & Divestitures": [
+    "carve-out", "carve out", "divestiture", "spin-off", "separation",
+    "asset sale", "transition services agreement", "tsa ", "stand-alone cost"
+  ],
+  "Working Capital & Cash Management": [
+    "working capital", "cash management", "liquidity", "cash flow", "treasury",
+    "accounts receivable", "accounts payable", "inventory management",
+    "days sales outstanding", "dso ", "net working capital"
+  ],
+  "Cost Optimization": [
+    "cost reduction", "cost optimization", "cost savings", "spend reduction",
+    "zero-based budgeting", "overhead reduction", "sg&a reduction",
+    "cost takeout", "cost transformation", "right-sizing"
+  ],
+  "Strategy & Corporate Development": [
+    "corporate strategy", "strategic planning", "competitive analysis",
+    "market strategy", "growth strategy", "strategic advisory",
+    "strategic transformation", "business strategy", "strategic roadmap",
+    "portfolio strategy", "business model"
+  ],
+  "Interim Management & CXO": [
+    "interim ceo", "interim cfo", "interim coo", "interim management",
+    "chief restructuring officer", "cro ", "interim president",
+    "acting cfo", "acting ceo", "management transition"
+  ],
+  "Organisational Design": [
+    "organisational design", "organizational design", "org design",
+    "organisational structure", "operating model design", "role design",
+    "team structure", "governance structure"
+  ],
+  "Change Management": [
+    "change management", "change leadership", "stakeholder management",
+    "change readiness", "transformation management", "culture change",
+    "adoption", "communication strategy"
+  ],
+  "Supply Chain & Procurement": [
+    "supply chain", "procurement", "sourcing", "supplier management",
+    "vendor management", "strategic sourcing", "spend analysis",
+    "category management", "demand planning", "inventory optimization"
+  ],
+  "Lean & Operational Excellence": [
+    "lean", "six sigma", "kaizen", "operational excellence",
+    "continuous improvement", "total productive maintenance",
+    "value stream mapping", "waste elimination"
+  ],
+  "Data Analytics & Business Intelligence": [
+    "data analytics", "business intelligence", "bi ", "reporting", "dashboard",
+    "data visualization", "data modelling", "predictive analytics",
+    "advanced analytics", "statistical analysis"
+  ],
+  "Digital Transformation": [
+    "digital transformation", "digitalization", "digitisation", "digitization",
+    "digital strategy", "industry 4.0", "automation", "robotic process automation",
+    "rpa ", "intelligent automation"
+  ],
+  "Cybersecurity": [
+    "cybersecurity", "cyber security", "information security", "infosec",
+    "cyber risk", "incident response", "penetration testing", "vulnerability",
+    "security operations", "zero trust", "identity management", "data privacy"
+  ],
+  "ERP & Systems Implementation": [
+    "erp", "sap", "oracle", "microsoft dynamics", "workday", "salesforce",
+    "systems implementation", "it implementation", "enterprise systems",
+    "system integration", "legacy modernization"
+  ],
+  "Private Equity Performance Improvement": [
+    "private equity performance", "value creation plan", "hundred-day plan",
+    "100-day plan", "pe-backed", "portfolio performance", "ebitda improvement",
+    "value creation", "sponsor-backed", "hold period"
+  ],
+  "Transaction Advisory & Due Diligence": [
+    "transaction advisory", "due diligence", "financial due diligence",
+    "quality of earnings", "qoe ", "operational due diligence",
+    "commercial due diligence", "vendor due diligence", "vdd ",
+    "buy-side", "sell-side", "deal support", "m&a advisory"
+  ],
+  "Capital Markets & Investment Banking": [
+    "capital markets", "investment banking", "ipo", "debt capital",
+    "equity capital", "bond issuance", "underwriting", "securitization",
+    "structured finance", "leveraged finance", "high yield", "syndicated loan"
+  ],
+  "Regulatory & Compliance": [
+    "regulatory compliance", "compliance program", "anti-money laundering",
+    "aml", "know your customer", "kyc", "sanctions compliance", "dodd-frank",
+    "mifid", "basel", "regulatory change", "compliance monitoring"
+  ],
+  "Risk Management": [
+    "risk management", "enterprise risk", "operational risk", "credit risk",
+    "market risk", "liquidity risk", "risk framework", "risk assessment",
+    "risk appetite", "scenario analysis", "stress testing", "model risk"
+  ],
+  "Pricing Strategy": [
+    "pricing strategy", "price optimization", "revenue management",
+    "dynamic pricing", "yield management", "pricing analytics",
+    "margin management", "price elasticity"
+  ],
+  "Executive Compensation & Benefits": [
+    "executive compensation", "compensation design", "incentive plan",
+    "long-term incentive", "equity compensation", "pay equity", "total rewards",
+    "benefits design", "pension advisory", "retirement plan", "deferred compensation"
+  ],
+  "Corporate Governance & Board Advisory": [
+    "corporate governance", "board advisory", "board of directors",
+    "audit committee", "governance framework", "board effectiveness",
+    "independent director", "fiduciary"
+  ],
+  "Anti-Corruption & Integrity": [
+    "anti-corruption", "anti-bribery", "fcpa", "uk bribery act", "integrity",
+    "compliance investigation", "third-party risk", "abc compliance",
+    "ethics program", "code of conduct"
+  ],
+  "Insolvency & Creditor Advisory": [
+    "insolvency", "creditor", "lender advisory", "ad hoc committee",
+    "bondholder", "secured creditor", "unsecured creditor", "pre-packaged",
+    "scheme of arrangement", "administration", "receiver", "liquidator"
+  ],
+  "Healthcare Operations": [
+    "hospital operations", "health system operations", "revenue cycle",
+    "clinical operations", "patient throughput", "healthcare performance",
+    "health system transformation", "physician alignment", "population health"
+  ],
+  "Economic Analysis": [
+    "economic analysis", "economic consulting", "econometric", "macroeconomic",
+    "microeconomic", "economic damages", "economic impact", "economic research",
+    "antitrust economics", "competition economics"
+  ],
+  "Project Finance": [
+    "project finance", "infrastructure finance", "ppp",
+    "public-private partnership", "concession", "build-operate-transfer",
+    "project funding"
+  ]
+}

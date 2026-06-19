@@ -1,0 +1,80 @@
+{
+  "Healthcare": [
+    "healthcare", "health care", "hospital", "health system", "physician",
+    "clinical", "patient", "payer", "provider", "managed care", "medical device",
+    "medtech", "health insurance", "health services", "nursing", "behavioral health",
+    "mental health", "oncology", "radiology", "revenue cycle"
+  ],
+  "Pharmaceuticals & Life Sciences": [
+    "pharmaceutical", "pharma", "drug", "biotech", "biotechnology",
+    "life sciences", "clinical trial", "fda", "ema", "drug development",
+    "biopharma", "generics", "specialty pharma", "medical affairs"
+  ],
+  "Financial Services": [
+    "financial services", "banking", "bank", "capital markets", "asset management",
+    "wealth management", "hedge fund", "fund management", "insurance", "fintech",
+    "payments", "lending", "credit", "mortgage", "brokerage", "securities",
+    "investment management", "pension", "private banking", "retail banking",
+    "commercial banking", "investment bank", "institutional investment"
+  ],
+  "Private Equity": [
+    "private equity", "pe firm", "pe fund", "portfolio company", "lbo",
+    "leveraged buyout", "growth equity", "venture capital", "buyout", "sponsor",
+    "pe-backed", "portfolio companies"
+  ],
+  "Energy & Utilities": [
+    "energy", "oil and gas", "oil & gas", "upstream", "downstream", "midstream",
+    "refinery", "power generation", "utility", "utilities", "electricity",
+    "natural gas", "lng", "pipeline", "drilling", "exploration", "production",
+    "renewable energy", "solar", "wind", "nuclear", "petrochemical"
+  ],
+  "Consumer & Retail": [
+    "consumer", "retail", "consumer products", "fmcg", "cpg", "grocery",
+    "fashion", "apparel", "luxury", "e-commerce", "direct-to-consumer",
+    "supermarket", "consumer goods", "food & beverage", "food and beverage",
+    "restaurant", "hospitality", "hotel", "leisure"
+  ],
+  "Automotive": [
+    "automotive", "automobile", "vehicle", "oem", "auto parts", "dealership",
+    "electric vehicle", "ev ", "mobility", "fleet", "aftermarket"
+  ],
+  "Industrials & Manufacturing": [
+    "industrial", "manufacturing", "factory", "manufacturing plant",
+    "aerospace", "defense", "chemicals industry", "plastics", "packaging",
+    "heavy industry", "metals industry", "mining", "steel", "aluminum"
+  ],
+  "Technology & Software": [
+    "technology company", "tech company", "saas", "cloud computing",
+    "enterprise software", "it services", "managed services", "semiconductors",
+    "hardware", "networking", "telecommunications", "telecom", "streaming",
+    "gaming", "b2b software", "software company", "tech client"
+  ],
+  "Real Estate": [
+    "real estate", "reit", "commercial real estate", "residential real estate",
+    "multifamily", "real estate development", "facility management", "real estate investment"
+  ],
+  "Transportation & Logistics": [
+    "transportation", "logistics", "shipping", "freight", "warehouse",
+    "distribution", "fleet management", "rail", "aviation", "airline",
+    "airport", "maritime", "port", "trucking"
+  ],
+  "Education": [
+    "education sector", "higher education", "university", "school district",
+    "edtech", "vocational training", "curriculum development", "education client",
+    "education industry"
+  ],
+  "Government & Public Sector": [
+    "government", "public sector", "federal", "state agency", "municipal",
+    "public administration", "defense contractor", "public service", "sovereign",
+    "regulatory body", "ministry"
+  ],
+  "Insurance": [
+    "insurance", "reinsurance", "underwriting", "actuarial", "claims",
+    "p&c", "life insurance", "specialty insurance", "insurance brokerage"
+  ],
+  "Media & Entertainment": [
+    "media", "entertainment", "broadcasting", "publishing", "content",
+    "streaming", "digital media", "music", "film", "television",
+    "advertising agency", "sports"
+  ]
+}

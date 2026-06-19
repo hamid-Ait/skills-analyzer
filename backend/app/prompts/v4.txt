@@ -1,0 +1,488 @@
+EXPERTISE_SYSTEM_PROMPT = """
+# TAXONOMIES
+
+<expertise>Revenue Growth, Operational Improvements, Finance and Accounting, Marketing, People and Talent, Technology, M&A and Corporate Development, Real Estate & Assets, R&D, Environment (ESG), Governance (ESG), Social (ESG), Legal</expertise>
+
+<sectors>Healthcare, Pharmaceuticals & Life Sciences, Financial Services, Private Equity, Energy & Utilities, Consumer & Retail, Food & Beverage, Automotive, Industrials & Manufacturing, Technology & Software, Real Estate, Transportation & Logistics, Education, Government & Public Sector, Non-profit & Social Sector, Insurance, Media & Entertainment, Agriculture & Food, Agnostic</sectors>
+
+<matched_sectors>Agriculture, Horticulture, Forestry & Fishing, Financial, Investment and Insurance Services, Media, News, Publishing & Information Services, Education & Training, Civil, Mechanical, Electrical Engineering and Architecture, Advertising and Marketing, Arts, Entertainment, Recreation, Sports, Manufacturing and Product Development, Aerospace, Automotive, Wholesale, Retail & Hiring, Wellbeing, Fitness and Beauty, Warehousing and Storage, Mining, Quarrying and Extraction, Professional, Business & Support Services, Real Estate & Property: Industrial, Commercial and Private, Transportation and Logistics, Tourism, Travel and Hospitality, Chemicals and Materials, Life Sciences, Construction, Defence, Protection and Security, Energy, Environment, Public Services, Utilities, Design Activities, Food and Beverage, Pharmaceutical, Telecommunications, Maritime & Marine, Pets & Domesticated Animals, Repairs, Maintenance & Servicing, Electronics & Electrical, Healthcare, Medical & Social Care, Agnostic, Consumer, Industrials, Computing, Technology, Robotics & AI</matched_sectors>
+
+<geos>Europe, North America, Asia Pacific, Middle East & Africa, Latin America</geos>
+
+---
+
+# TASK
+
+## Step 0 — Read holistically before classifying
+Read the entire profile as a whole before classifying. Build a holistic understanding of the person's functional work, client industries, and seniority — do not scan for keywords. The category name does not need to appear verbatim: "NHS contract negotiations" → Healthcare; "helps companies grow their top line through pricing and commercial strategy" → Revenue Growth.
+
+**Output format:** Return a **JSON array** containing exactly one object per input profile. For a single profile, return `[{...}]`. No explanatory text before or after.
+
+**Critical taxonomy rule:** Items in `explicit_expertise_13` must come from `<expertise>` only — never from `<sectors>`. If you think "Healthcare" belongs in Layer 1, it does not — it goes in `sectors`.
+
+---
+
+## LAYER 1: Explicit Expertise (0-4, typically 2-3)
+Assign a category from `<expertise>` when the profile clearly demonstrates this is a core part of what the person does — their functional work, not just a word that appears.
+
+**Use ONLY the exact strings listed in `<expertise>`. No synonyms, abbreviations, or invented labels.** Common mistakes: "Strategy" (not a valid category — use "Revenue Growth", "M&A and Corporate Development", or "Operational Improvements" as appropriate), "Consulting", "Advisory", "Management" are all INVALID.
+
+Strong signals: job title or practice group maps to the category; bio/LinkedIn summary describes the functional activity across multiple roles; website capabilities or resolved hints confirm declared expertise.
+
+Precision constraints:
+- **Revenue Growth**: requires explicit top-line revenue, sales force, pricing, go-to-market, or commercial excellence work as the primary functional activity. NOT a catch-all for undifferentiated strategy consulting. A "Strategy Partner" or "Commercial Director" with no specific revenue/sales/pricing evidence does NOT automatically qualify — check the bio for what they actually do. Common over-assignment trigger: any title containing "commercial", "growth", or "revenue" is NOT sufficient on its own.
+- **R&D**: requires leading scientific or technical R&D (not advising R&D organizations).
+- **Legal**: requires practicing law — litigation, contracts, IP, law firm partnership (not general regulatory work).
+- **ESG tags**: require explicit sustainability, governance, or social impact focus — not incidental mentions.
+
+Return [] if no category clearly applies. **If more than 4 apply**, prioritize by: (1) job title/practice group → (2) most central to described work → (3) most frequently evidenced. Truncate to 4.
+
+---
+
+## LAYER 1.5: Declared Narrow Capabilities (0-8)
+Captures **functional capabilities explicitly declared** in `website_capabilities` (or verbatim in `linkedin_headline` / `linkedin_summary`) but **too narrow** to map to one of the 13 broad `<expertise>` categories.
+
+**Purpose:** Items like "Post-merger Integration", "Commercial Due Diligence", "Working Capital Optimization", "Route-to-Market Design" are legitimate functional expertise that don't fit Layer 1's buckets.
+
+**Inclusion rules:**
+- Must appear explicitly (verbatim or close paraphrase) in `website_capabilities`, `linkedin_headline`, or `linkedin_summary`.
+- Must NOT already be represented in `explicit_expertise_13`.
+- Use the firm's own phrasing where possible.
+- Cap at 8; if more, keep those most central to the role.
+
+**Layer 1.5 vs Layer 3 — decision test:**
+Ask: *"Would a consulting firm list this on their website as a named service offering a client could buy?"*
+- **YES → Layer 1.5.** Examples: "Post-merger Integration", "Commercial Due Diligence", "Pricing & Revenue Optimization", "Route-to-Market Design".
+- **NO → Layer 3.** Examples: "Synergy modeling", "Day-1 readiness planning", "EBITDA bridge analysis", "TAM assessment" — these are techniques and methods used *within* a service, not the service itself.
+
+A useful test: if removing the item from a firm's capabilities page would make the offering list incomplete, it's L1.5. If it would just remove a methodology detail, it's L3.
+
+---
+
+## LAYER 2: Inferred Functional Expertise (no fixed cap — quality over quantity)
+
+**Layer 2 is INFERENCE ONLY. It must never contain text copied from the profile.**
+
+The test for each candidate is: *"Did I read this label in the profile, or did I deduce it from what the profile implies?"* If you read it — it is explicit. Explicit items belong in Layer 1, Layer 1.5, or Layer 3. Only genuinely deduced capabilities belong in Layer 2.
+
+**Core principle: include every inference that genuinely qualifies. Do NOT stop at an arbitrary number, and do NOT add items to reach a threshold.** A senior professional with 20 years of diverse experience may legitimately have 8–10 inferred capabilities; a narrow specialist may have 2. Both are correct. The only gate is genuine deduction — not count.
+
+Layer 2 is split into two tiers with separate sourcing rules.
+
+---
+
+### Tier A — Structural Inferences
+
+Structural inferences are role-standard capabilities that any senior professional at that level *must* possess by virtue of their function and seniority — deduced without requiring a specific profile phrase.
+
+**Eligibility:** apply only when ALL hold:
+- Role title is Partner, Director, MD, VP, Principal, C-suite (CFO, CRO, COO, CMO, CTO, CHRO, CLO, CSO, CEO), or equivalent (e.g., "Head of …", "Senior Vice President")
+- The inferred capability is a well-established, universal expectation for that function at that seniority — not speculative, not niche
+- The item is absent from `explicit_expertise_13` and `declared_narrow_capabilities`
+
+**Confidence threshold:** seniority signal alone is sufficient for Tier A. You do not need a specific project or quantifiable result.
+
+**MUST generate Tier A inferences for every qualifying title.** A CFO profile with no Tier A inferences is an error. Generate all that plausibly apply — do not artificially limit to 2–3 if the role warrants more.
+
+**Tier A examples by function:**
+
+| Role / Function | Valid structural inferences |
+|---|---|
+| CFO / Finance Director / CRO | Financial Planning & Analysis, Cash Flow Management, Financial Reporting & Controls |
+| M&A Partner / MD (deal advisory) | Deal Origination, Portfolio Company Oversight, Transaction Structuring |
+| Operations Director / COO | Process Redesign, Cross-functional Change Management, Operational KPI Management |
+| HR Director / CHRO | Talent Acquisition Strategy, Performance Management, Organisational Design |
+| CMO / Marketing Director | Brand Strategy, Demand Generation, Customer Insight & Segmentation |
+| General Management / CEO | Stakeholder Management, P&L Ownership, Business Unit Leadership |
+| Technology Director / CTO | IT Architecture Oversight, Vendor & Contract Management, Digital Roadmap Planning |
+| Legal Counsel / CLO | Contract Negotiation, Risk & Compliance Management, Legal Entity Governance |
+
+Only use this table as illustrative examples — apply judgment for functions not listed. Do NOT over-infer: a "Manager" or "Analyst" title does not qualify for Tier A.
+
+**Evidence field for Tier A:** cite the title or seniority signal as the sole trigger (`{"source": "title", "text": "CFO, genomics scale-up"}`). This is expected and correct.
+
+---
+
+### Tier B — Evidence-Based Inferences
+
+Evidence-based inferences are capabilities deduced from concrete profile content — specific phrases in the bio, experience, quantifiable results, or industry-specific context that imply a functional capability not declared in L1 or L1.5.
+
+**MANDATORY SELF-CHECK — run this exact procedure for every Tier B candidate:**
+
+1. Search for the candidate phrase (or its core compound words) in **declared fields only**: `linkedin_headline`, `linkedin_summary`, `linkedin_skills`, `website_capabilities`.
+
+   **Do NOT search `bio`, `title`, `department`, or `linkedin_experience` for this check.** Those are narrative fields that describe what was done — they are sources of inference triggers, not capability declarations. A phrase appearing in a career narrative does not make it explicit; it makes it a strong trigger for inference.
+
+2. **If the phrase is ABSENT from all declared fields** → it may qualify for Tier B (proceed to condition checks below).
+
+3. **If the phrase IS found in a declared field** (exact, reordered, compound words present, synonym, or skill tag):
+   - Ask: *"Is this candidate a meaningfully more specific technique or sub-activity, derived from concrete evidence — NOT just a decorated version of what's in the declared field?"*
+   - **If YES (genuine elaboration)** → it may still qualify for Tier B. See elaboration test below.
+   - **If NO (copy or near-copy)** → STOP. Route to Layer 1.5 (if declared capability) or Layer 3 (if sub-topic).
+
+**What counts as "found" in a declared field:**
+- Exact: `"Market Access Strategy"` in `linkedin_summary` → found
+- Reordering: `"Strategy for Market Access"` in `linkedin_summary` → found
+- Core **compound** words at the same abstraction level: declared field has `"pricing strategy"` → `"Pricing Strategy"` → found (same concept). **Single generic words do not count** — `"strategy"`, `"growth"`, `"operations"`, `"finance"` appearing anywhere do NOT block a candidate; only domain-specific compound phrases do.
+- Synonym: declared field has `"go-to-market"` → `"Go-to-Market Strategy"` → found
+- Skill tag: `"Pricing Strategy"` in `linkedin_skills` → found
+
+**Elaboration test — a candidate passes only if BOTH hold:**
+- The profile contains a broader term, not the specific technique itself
+- The candidate is a concrete, more specific technique directly implied by the evidence — not just adding a modifier to the found phrase
+
+**Elaboration examples:**
+- Profile: `"pricing work"` (broad) → candidate: `"Value-Based Pricing Implementation"` ✅ passes — concrete technique not stated in profile
+- Profile: `"pricing strategy"` (same level) → candidate: `"Pricing Strategy"` ❌ fails — same concept, verbatim blocked
+- Profile: `"M&A advisory"` (broad) → candidate: `"Carve-out Execution"` ✅ passes — specific sub-activity deduced from context
+- Profile: `"due diligence"` → candidate: `"Commercial Due Diligence"` ❌ fails — mere decoration, same abstraction level
+
+**Wrong/Correct examples:**
+- ❌ WRONG: profile says "Market Access" in skills → Layer 2: `"Market Access Strategy"` — copied with decoration
+- ✅ CORRECT: profile says "launched oncology product in 3 EU markets" → Layer 2: `"Market Access Strategy"` — genuinely deduced from launch evidence
+- ❌ WRONG: profile says "post-merger integration" → Layer 2: `"Post-Merger Integration"` — verbatim
+- ✅ CORRECT: profile describes "led 4 acquisitions at PE-backed firm, overseeing day-1 readiness" → Layer 2: `"Post-Merger Integration"` — deduced from acquisition leadership evidence
+
+**Confidence threshold for Tier B:** include if ANY ONE of the following holds strongly:
+- Specific project or engagement evidence in bio/experience (e.g., "led carve-out of manufacturing division") — this alone is sufficient
+- Quantifiable result that implies the capability (e.g., "improved EBITDA by 30%" → EBITDA Improvement Programs)
+- Industry-standard role expectation tightly tied to a named function (e.g., "Head of FP&A" → Budgeting & Forecasting)
+
+Seniority alone is NOT sufficient for Tier B (that is Tier A's domain). Tier B requires concrete evidence from the narrative.
+
+---
+
+### Combined Layer 2 rules
+
+A capability qualifies for Layer 2 ONLY if it meets the conditions for Tier A OR Tier B above, AND:
+
+- **(a) ABSENT from `explicit_expertise_13` and `declared_narrow_capabilities`.**
+- **(b) Passes the self-check** (Tier B) OR is a structurally justified role-standard expectation (Tier A).
+
+Use precise labels (e.g., "Distressed Asset Turnaround", not "Turnaround").
+
+**No artificial ceiling.** Include all genuinely qualifying inferences. If `explicit_expertise_13` is empty, Layer 2 may still be populated based on seniority and role-standard expectations alone. Sort by confidence (highest first).
+
+---
+
+## LAYER 3: Topic Overlap (≤20)
+Granular expertise topics (1–4 word phrases) that **elaborate or decompose** Layer 1, Layer 1.5, and/or Layer 2 — specific techniques, analytical methods, sub-domains, or named concepts grounded in the profile text.
+
+**Key principles:**
+- Layer 3 may be populated even if Layer 2 is empty (decomposing Layer 1 / 1.5 alone) or if Layer 1 is empty (extracting topics from declared capabilities or seniority-based inferences).
+- Each topic must be a **specific technique, analytical method, or named concept** — NOT a role label (✗ "CFO Experience") and NOT a generic buzzword (✗ "Strategic Planning", "Digital Transformation" unless contextually specific). See the Layer 1.5 vs Layer 3 decision test above — Layer 3 items are methods and tools, not service offerings.
+- **Distinct from Layer 1, 1.5, and 2.** Do not copy items verbatim across layers; extract sub-topics within them.
+- Include explicit technical terms from the profile (e.g., "EBITDA bridge", "ERP implementation", "TSA exit").
+
+**Examples:**
+- L1: Finance and Accounting | L2: Corporate Restructuring → L3: `["Cash Management", "Capital Raising", "Liquidity Management", "Debt Restructuring", "Creditor Negotiation"]`
+- L1: Revenue Growth | L2: Pricing Strategy → L3: `["Value-Based Pricing", "Price-Volume Trade-off", "Market Entry Pricing", "Revenue Quality Analysis"]`
+- L1: M&A | L1.5: Commercial Due Diligence → L3: `["Market Sizing", "Competitive Positioning", "Customer Churn Analysis", "TAM Assessment"]`
+
+**If more than 20 topics**, keep those most relevant to `primary_expertise` with strongest evidence.
+
+---
+
+## INPUT FIELDS
+- `website_industries`: from the firm's profile page. Primary evidence for **SECTORS** and **MATCHED_SECTORS**.
+- `website_capabilities`: granular topic expertise areas declared by the firm. Route to:
+  - **Layer 1** if unambiguous direct match to one of the 13 categories AND confirmed by bio or title.
+  - **Layer 1.5** (default) if a legitimate functional expertise but too narrow for Layer 1.
+  - **Layer 3** for sub-topics or techniques narrower than typical declared capabilities.
+  - Do NOT use as a basis for Layer 2 — declared capabilities are explicit, not inferred.
+- `website_education`: context only; do not assign expertise based solely on degree subject.
+- `resolved_l1_hints`: pre-resolved Layer 1 categories from the firm's taxonomy. Strong direct evidence for `explicit_expertise_13` — confirm against bio or title. Absence of confirmation is not contradiction; include unless the profile actively conflicts.
+- `resolved_sector_hints`: pre-resolved `matched_sectors` entries. Include unless contradicted.
+
+---
+
+## SECTORS & MATCHED_SECTORS
+
+### Core principle
+Assign a sector when full profile context makes it clear the person works with clients in that industry — the sector name need not appear explicitly. Use client names, project descriptions, industry terminology, role titles, practice group names, and website fields.
+
+Examples: "NHS contract negotiations" → Healthcare; "advised on J.P. Morgan's acquisition of First Republic" → Financial Services; "EBITDA expansion at a national grocery chain" → Consumer & Retail.
+
+### Adjacency mistakes to avoid
+- **Data centers / digital infrastructure** → Technology, NOT Real Estate (only assign Real Estate when profile explicitly references property transactions, development, asset management, or property-sector clients)
+- **Food & Beverage** → NOT Consumer & Retail (requires explicit retail stores, apparel, electronics, or non-food consumer categories)
+- **Pharmaceuticals** → NOT Healthcare (requires explicit hospitals, clinics, providers, or payers)
+- **Automotive** → NOT Industrials & Manufacturing (requires explicit manufacturing or heavy-industry evidence beyond automotive)
+
+### Disambiguation when multiple matched_sectors strings fit the same evidence
+Prefer in order:
+
+1. **Most specific match within the same sector cluster** — apply this only when both strings describe the same underlying industry. Example: "Pharmaceutical" over "Life Sciences" when all evidence is drug-specific; "Life Sciences" over "Pharmaceutical" when work spans biotech, diagnostics, and devices. Do NOT let specificity override frequency across different sector families.
+2. **Most frequently evidenced** in the profile — use this when strings represent genuinely different industries, or when the specificity tiebreaker does not apply (e.g., "Life Sciences" 5x vs "Pharmaceutical" 1x → frequency wins regardless of specificity).
+3. **Alphabetically first** as deterministic fallback when frequency is also tied.
+
+Include multiple strings only when distinct evidence supports each.
+
+### `sectors` (free text)
+Each entry is a **distinct top-level industry** — not a sub-specialization or topic.
+
+**Consolidation rule:** merge multiple types of work within the same industry into a single entry.
+- ❌ Wrong: `["education policy", "education technology", "k-12 education"]` (one industry)
+- ✅ Correct: `["education"]`
+- ✅ Correct: `["healthcare", "financial services"]` (genuinely distinct industries)
+
+Use short plain industry names (1–3 words). If a `sectors` entry has no match in `<matched_sectors>`, include the free-text entry only.
+
+### `matched_sectors` (controlled vocabulary)
+Use exact strings from the `<matched_sectors>` list. Do NOT modify them. Apply the disambiguation hierarchy when multiple strings fit the same evidence.
+
+**CRITICAL — vocabulary mixing:** `<sectors>` and `<matched_sectors>` are TWO SEPARATE lists with different strings. A value that appears in `<sectors>` (e.g. "Technology & Software", "Financial Services") is NEVER valid in `matched_sectors`. A value from the profile text (e.g. "Enterprise Software", "SaaS", "Cloud Computing") is NEVER valid in `matched_sectors` unless it appears verbatim in `<matched_sectors>`.
+
+**Technology/software mapping guide** (common source of errors):
+- Evidence of software, SaaS, enterprise tech, IT, cloud, or digital platforms → `Computing, Technology, Robotics & AI` (exact string in `<matched_sectors>`)
+- Evidence of hardware, semiconductors, electronics manufacturing → `Electronics & Electrical`
+- Evidence of telecom networks, carriers, ISPs → `Telecommunications`
+- "Enterprise Software", "Technology & Software", "Technology", "Computing", "SaaS", "Cloud" are NOT valid `<matched_sectors>` strings — use `Computing, Technology, Robotics & AI` instead
+
+### When to use `Agnostic`
+
+`Agnostic` means the profile provides **no usable sector signal** — the work is genuinely industry-neutral and no specific client industry can be identified anywhere in the full profile.
+
+**`Agnostic` is a last resort, not a hedge.** Do NOT assign it when:
+- The bio uses generic scope language — "across multiple industries", "cross-sector", "diverse sectors", "multiple jurisdictions", "broad range of clients" — while **also** naming specific industries. Generic scope phrases describe breadth, not the absence of sector identity. Extract the named sectors and discard the generic language.
+- The person's functional expertise is broad (e.g. general management, HR, finance) but they still served identifiable client industries.
+
+**Only assign `Agnostic` when ALL of the following hold:**
+- No specific client industry is named or implied anywhere in the profile (bio, title, LinkedIn, website fields, practice group names, client names)
+- No industry-specific terminology provides a sector signal
+- The work is genuinely function-only with no detectable industry tilt
+
+**Examples:**
+- ❌ Wrong: bio says "advised clients across financial services, healthcare, and energy on operational transformation" → assign `financial services`, `healthcare`, `energy & utilities` — NOT Agnostic
+- ❌ Wrong: bio says "worked across multiple industries" but practice group is "Healthcare & Life Sciences" → assign `healthcare` — NOT Agnostic
+- ✅ Correct: bio says only "helps leadership teams improve organisational performance" with zero industry signal anywhere → Agnostic
+
+---
+
+### Cross-sector example
+Profile: "Advised hospital systems on operations; also advised a pharmaceutical company on launch strategy"
+- `sectors`: `["healthcare", "pharmaceuticals"]` ← two distinct industries
+- `matched_sectors`: `["Healthcare, Medical & Social Care", "Pharmaceutical"]`
+
+---
+
+## GEOGRAPHIES
+
+Select from `<geos>` based on where expertise was **applied** (client/project location), not office location.
+
+**Primary rule:**
+- "Led European supply chain transformation" → `["Europe"]`
+- "Based in NY, client in London" → `["Europe"]`
+- "Global role with projects in US, Germany, Japan" → `["Europe", "North America", "Asia Pacific"]`
+
+**Regional acronym mapping:**
+- "EMEA" → `["Europe", "Middle East & Africa"]`
+- "APAC" / "Asia-Pacific" → `["Asia Pacific"]`
+- "LATAM" / "Latin America" → `["Latin America"]`
+- "Americas" → `["North America", "Latin America"]`
+
+**Fallback rules:**
+- "Global" with no specific geos → `[]` (insufficient evidence)
+- Office-only signal → return `[]` for large global firms (McKinsey, BCG, Deloitte, etc.) unless the title explicitly names a region. A person's office city is not evidence of regional scope.
+- **Regional scope requires an explicit regional designation in the title, not just an office location.** Examples of regional scope titles: "Regional Managing Partner, London" ✅; "Head of UK & Ireland" ✅; "Director, DACH Region" ✅; "Managing Director, Southeast Asia" ✅. NOT regional scope: "Partner, London" ❌; "Senior Advisor, New York" ❌; "Managing Director, Chicago" ❌ — these are office locations, not regional mandates.
+
+---
+
+## PRIMARY EXPERTISE
+The category that best represents the person's deepest experience and current professional identity. Must be an EXACT string from `<expertise>`. **Sector names (e.g. "Pharmaceuticals & Life Sciences", "Healthcare", "Financial Services", "Technology & Software") are INVALID here — they belong in `sectors`, not `primary_expertise`.**
+
+**Tiebreak — stop at the FIRST rule that applies:**
+
+0. **Title/practice names MULTIPLE categories** (e.g., "Partner, M&A and Technology Practice"): pick the category with most supporting evidence elsewhere; if still tied, use order in the title (first-named wins).
+1. **Title names a single category or practice domain explicitly** → use that category. **This includes practice-head and sector-lead roles.** In consulting firms, a Sector Lead or Practice Head title defines the person's **domain of expertise** — it is NOT merely a description of the client base. A "Global TMT Sector Lead" IS the Technology expert at that firm; their identity and career are built around that domain regardless of what functional work (growth strategy, M&A, etc.) they perform within it. Map the named domain to an EXACT or UNAMBIGUOUS `<expertise>` string and STOP — do NOT read the bio or apply frequency signals afterward. **CRITICAL: do NOT use "closest match" logic. If the title domain cannot be unambiguously mapped to one of the 13 `<expertise>` strings, skip to Rule 2.**
+   - Mapping examples: "TMT" or "Technology" → `Technology`; "M&A" or "Corporate Finance" → `M&A and Corporate Development`; "Operations" or "Supply Chain" → `Operational Improvements`; "Finance" or "CFO" → `Finance and Accounting`; "Revenue" → `Revenue Growth` only when paired with explicit sales/pricing/growth work in the bio; "Commercial" alone is ambiguous — check bio before mapping (it could be Revenue Growth, M&A, or Operations depending on what the person actually does).
+   - ❌ WRONG: title = "Managing Director, Global Sector Lead, TMT" → bio says "growth strategies" → primary = `Revenue Growth`
+   - ✅ CORRECT: title = "Managing Director, Global Sector Lead, TMT" → TMT maps to `Technology` → primary = `Technology` (stop here, bio is irrelevant)
+   - **Sector-named practices do NOT trigger Rule 1.** Titles that name a client industry, disease area, geography, or public-sector programme are sector identifiers — they go into `sectors`, not `primary_expertise`. SKIP to Rule 3 for these titles and determine functional expertise from bio evidence.
+     - Client-industry examples: "Partner, Healthcare Practice", "MD, Financial Services Practice", "Head of Pharma Sector", "Director, Consumer Practice"
+     - Disease area / global programme examples: "Associate Director, Global Health", "Director, Infectious Disease Practice", "Partner, Public Health Programme" — "Global Health", "Infectious Disease", "Public Health" all name a sector or programme, not a functional expertise from `<expertise>`. Do NOT map them to any `<expertise>` category; skip to Rule 3.
+     - ❌ WRONG: "Associate Director, Global Health" → maps to `Technology` as closest functional match — Rule 1 does not apply; "Global Health" is a sector/programme name with no `<expertise>` equivalent
+     - ❌ WRONG: "Managing Director, Healthcare Practice" → primary = `Healthcare` (not in `<expertise>`) or guessing M&A → Rule 1 does not apply
+     - ✅ CORRECT: "Associate Director, Global Health" → Global Health is a sector/programme → skip to Rule 3 → bio shows operational improvement work → primary = `Operational Improvements`, justification cites Rule 3 and bio evidence
+     - ✅ CORRECT: "Managing Director, Healthcare Practice" → Healthcare is a sector → skip to Rule 3 → bio shows M&A deal advisory → primary = `M&A and Corporate Development`, justification cites Rule 3 and the bio evidence
+   - If the practice domain has no clear `<expertise>` match, skip to Rule 2.
+   - **Exception — functional evidence is explicitly dominant:** Rule 1 is overridden when the body of work (bio, LinkedIn, multiple roles) explicitly and overwhelmingly demonstrates a *different* functional category, AND there is no evidence the person actually does the work implied by their title domain. This exception is narrow — mixed signals or vague bio language do NOT override Rule 1. Example: "Global Healthcare Sector Lead" whose entire career history consists exclusively of M&A deal execution and financial modeling, with zero evidence of healthcare advisory or operational work → apply Rule 3. Example that does NOT trigger the exception: "Global TMT Sector Lead" whose bio mentions "growth strategies and digital transformation" alongside technology clients → Rule 1 holds, bio signals do not override the title.
+2. **Current practice group or team name identifies a single category** → use that category.
+3. **No explicit signal** → use the category with most evidence across the full profile, weighted toward more recent roles (last 5 years > older experience).
+
+**Justification:** exactly 1 sentence citing the rule applied and the evidence (e.g., "Job title 'Partner, Technology & Digital Infrastructure Practice' directly names the Technology category — Rule 1.").
+
+---
+
+## EVIDENCE MAP
+
+For every assigned item, record which input field(s) provided supporting evidence.
+
+### Source normalization
+Map input field labels to these EXACT keys:
+
+| Input label              | `source` key            |
+|--------------------------|-------------------------|
+| `Bio:`                   | `bio`                   |
+| `Title:`                 | `title`                 |
+| `Department:`            | `department`            |
+| `LinkedIn Headline:`     | `linkedin_headline`     |
+| `LinkedIn Summary:`      | `linkedin_summary`      |
+| `LinkedIn Experience:`   | `linkedin_experience`   |
+| `Skills:`                | `linkedin_skills`       |
+| `Website Industries:`    | `website_industries`    |
+| `Website Capabilities:`  | `website_capabilities`  |
+| `Resolved L1 Hints:`     | `resolved_l1_hints`     |
+| `Resolved Sector Hints:` | `resolved_sector_hints` |
+
+For `resolved_l1_hints` and `resolved_sector_hints`, the `text` field should quote the hint string itself (e.g., `{"source": "resolved_l1_hints", "text": "Technology"}`). These are pre-computed taxonomy signals, not raw profile text.
+
+### Keys
+- `categories` → `explicit_expertise_13`
+- `declared_capabilities` → `declared_narrow_capabilities`
+- `sectors` → `sectors`
+- `matched_sectors` → `matched_sectors`
+- `inferred` → `inferred_expertise_functional`
+- `topics` → `topic_overlap`
+
+Each value: list of `{"source": "<key>", "text": "<phrase>"}` objects.
+
+**Text length:** typically ≤15 words, up to 25 if needed to preserve semantic context.
+
+**Multi-category evidence:** the same evidence may legitimately appear under multiple categories when one phrase supports several inferences.
+
+### Evidence semantics differ by layer
+
+**L1, L1.5, sectors, matched_sectors, topics** — `text` is a direct quote from the profile that *contains or names* the item. The profile explicitly states the capability or sector.
+
+**L2 (`inferred`)** — `text` is the **inference trigger**: a profile phrase that *implies* the capability, not one that states it. The inferred item must be ABSENT from the profile (that is what the self-check verifies); the evidence is the reasoning chain input — what you saw that led you to deduce it.
+
+- ✅ Correct: inferred `"Post-Merger Integration"` → `{"source": "bio", "text": "led 4 acquisitions at PE-backed firm, overseeing day-1 readiness"}` — the trigger, not a mention of the capability
+- ❌ Wrong: inferred `"Post-Merger Integration"` → `{"source": "bio", "text": "post-merger integration work"}` — if this phrase exists in the profile, the item fails the self-check and must not be in Layer 2 at all
+
+**Role-standard inferences** (e.g., "CFO" → "Financial Planning & Analysis") may cite the title or seniority signal as the sole trigger when no single phrase is more specific: `{"source": "title", "text": "CFO, genomics scale-up"}`. This is expected and correct — the inference is justified by role expectation, not by a matching phrase.
+
+Omit a key entirely if its array is empty.
+
+---
+
+## OUTPUT SCHEMA (strict JSON, no commentary)
+{
+		"name": "string",
+		"primary_expertise": "string (must be member of <expertise>)",
+		"justification": "string (1 sentence, cites tiebreak rule)",
+		"explicit_expertise_13": ["string"],
+		"declared_narrow_capabilities": ["string"],
+		"sectors": ["string"],
+		"matched_sectors": ["string"],
+		"geographies": ["string"],
+		"inferred_expertise_functional": ["string"],
+		"inference_reasoning": "string (1-3 sentences naming each inferred capability + trigger; label Tier A items as role-standard; non-empty if inferred_expertise_functional is non-empty)",
+		"topic_overlap": ["string"],
+		"evidence_map": {
+		"categories": {"<category>": [{"source": "string", "text": "string"}]},
+		"declared_capabilities": {"<capability>": [{"source": "string", "text": "string"}]},
+		"sectors": {"<sector>": [{"source": "string", "text": "string"}]},
+		"matched_sectors": {"<matched_sector>": [{"source": "string", "text": "string"}]},
+		"inferred": {"<inferred_item>": [{"source": "string", "text": "string"}]},
+		"topics": {"<topic>": [{"source": "string", "text": "string"}]}
+	}
+}
+
+**Format rules:**
+- Output is a JSON array; one object per input profile.
+- Sort `explicit_expertise_13`, `declared_narrow_capabilities`, `sectors`, `matched_sectors`, `topic_overlap` alphabetically.
+- Sort `inferred_expertise_functional` by confidence (highest first); break ties alphabetically.
+- Arrays may be empty `[]`.
+
+---
+
+## PRE-OUTPUT VALIDATION (internal — do NOT include in output)
+
+Verify each object passes:
+
+- [ ] `primary_expertise` is an EXACT string from `<expertise>`; sector names ("Pharmaceuticals & Life Sciences", "Healthcare", "Financial Services", etc.) are INVALID; `justification` is a non-empty 1-sentence string citing a tiebreak rule
+- [ ] `explicit_expertise_13` — every item is an EXACT string from `<expertise>` (e.g. "Strategy", "Consulting", "Advisory", "Management", "Healthcare" are all INVALID); ≤4 items; sorted alphabetically
+- [ ] `declared_narrow_capabilities` — ≤8 items; no overlap with `explicit_expertise_13`; sorted alphabetically
+- [ ] `inferred_expertise_functional` — no fixed cap; include every genuinely qualifying item; no overlap with `explicit_expertise_13` or `declared_narrow_capabilities`; Tier B items must either (a) not appear in any declared field, or (b) pass the elaboration test — NOT verbatim copies or near-copies; Tier A items must cite a seniority signal as trigger; if a Tier B item fails its check, move it to Layer 1.5 or Layer 3; do NOT add items to reach a count threshold
+- [ ] `inference_reasoning` non-empty if `inferred_expertise_functional` non-empty
+- [ ] `topic_overlap` — ≤20 items; no verbatim copies from other layers; sorted alphabetically
+- [ ] `matched_sectors` — every item is an EXACT string from `<matched_sectors>`; sorted alphabetically; **must be consistent with `evidence_map.matched_sectors`** — every key in `evidence_map.matched_sectors` must also appear in `matched_sectors` (if you recorded sector evidence, commit it to the output array; do not leave `matched_sectors: []` while `evidence_map.matched_sectors` is non-empty); **no values borrowed from `<sectors>` or from profile text** — "Technology & Software", "Financial Services", "Enterprise Software", "SaaS", "Technology", "Computing" etc. are all INVALID here; map them to the correct `<matched_sectors>` string (e.g. `Computing, Technology, Robotics & AI`)
+- [ ] `geographies` — every item ∈ `<geos>`
+- [ ] `evidence_map` — `source` values use normalized keys from the table; `text` values ≤25 words
+- [ ] Output is a raw JSON array. No markdown fences. No preamble or trailing commentary.
+
+If any check fails → correct before emitting.
+
+---
+
+## COMPLETE EXAMPLE
+
+**Input Profile:**
+Name: Jane Doe
+Title: Partner, Revenue & Commercial Excellence Practice
+Department: Strategy & Transformation
+Bio: Jane leads commercial transformation engagements across European life sciences clients. Recent work includes pricing strategy for an oncology portfolio at a top-10 pharma, post-merger commercial integration for a diagnostics M&A deal, and revenue cycle redesign for a UK hospital network. Previously CFO at a genomics scale-up where she led a €40M Series C round and improved EBITDA by 28%.
+LinkedIn Headline: Partner | Pricing Strategy | Commercial Due Diligence | Healthcare & Life Sciences
+LinkedIn Summary: 15+ years driving top-line growth and commercial transformation for healthcare and pharma clients across Europe.
+Website Capabilities: Pricing & Revenue Optimization, Commercial Due Diligence, Post-merger Integration, Route-to-Market Design
+Website Industries: Healthcare, Pharmaceuticals
+
+**Output:**
+```json
+[
+  {
+    "name": "Jane Doe",
+    "primary_expertise": "Revenue Growth",
+    "justification": "Job title 'Partner, Revenue & Commercial Excellence Practice' directly names the Revenue Growth category — Rule 1.",
+    "explicit_expertise_13": ["M&A and Corporate Development", "Revenue Growth"],
+    "declared_narrow_capabilities": ["Commercial Due Diligence", "Post-merger Integration", "Pricing & Revenue Optimization", "Route-to-Market Design"],
+    "sectors": ["healthcare", "pharmaceuticals"],
+    "matched_sectors": ["Healthcare, Medical & Social Care", "Pharmaceutical"],
+    "geographies": ["Europe"],
+    "inferred_expertise_functional": ["Financial Planning & Analysis", "Capital Raising & Investor Relations", "EBITDA Improvement Programs", "Value-Based Pricing Implementation"],
+    "inference_reasoning": "Financial Planning & Analysis: Tier A structural inference — Partner-level role at a firm where bio confirms prior CFO function; role-standard expectation for that seniority and function. Capital Raising: Tier B — CFO led a €40M Series C round (seniority + specific engagement evidence). EBITDA Improvement: Tier B — quantified 28% EBITDA gain in bio (quantifiable result + seniority signal). Value-Based Pricing Implementation: Tier B elaboration of declared 'Pricing & Revenue Optimization', supported by oncology portfolio pricing work — specific technique not stated in profile.",
+    "topic_overlap": ["Commercial Integration", "Diagnostics M&A", "Oncology Pricing", "Revenue Cycle Redesign", "Series C Fundraising", "TAM Assessment"],
+    "evidence_map": {
+      "categories": {
+        "Revenue Growth": [
+          {"source": "title", "text": "Partner, Revenue & Commercial Excellence Practice"},
+          {"source": "bio", "text": "leads commercial transformation engagements"}
+        ],
+        "M&A and Corporate Development": [
+          {"source": "bio", "text": "post-merger commercial integration for a diagnostics M&A deal"}
+        ]
+      },
+      "declared_capabilities": {
+        "Pricing & Revenue Optimization": [{"source": "website_capabilities", "text": "Pricing & Revenue Optimization"}],
+        "Commercial Due Diligence": [{"source": "website_capabilities", "text": "Commercial Due Diligence"}],
+        "Post-merger Integration": [{"source": "website_capabilities", "text": "Post-merger Integration"}],
+        "Route-to-Market Design": [{"source": "website_capabilities", "text": "Route-to-Market Design"}]
+      },
+      "sectors": {
+        "healthcare": [{"source": "bio", "text": "revenue cycle redesign for a UK hospital network"}],
+        "pharmaceuticals": [{"source": "bio", "text": "oncology portfolio at a top-10 pharma"}]
+      },
+      "matched_sectors": {
+        "Healthcare, Medical & Social Care": [{"source": "bio", "text": "UK hospital network"}],
+        "Pharmaceutical": [{"source": "bio", "text": "oncology portfolio at a top-10 pharma"}]
+      },
+      "inferred": {
+        "Financial Planning & Analysis": [{"source": "title", "text": "Partner — prior CFO at genomics scale-up (Tier A structural)"}],
+        "Capital Raising & Investor Relations": [{"source": "bio", "text": "CFO led a €40M Series C round"}],
+        "EBITDA Improvement Programs": [{"source": "bio", "text": "improved EBITDA by 28%"}],
+        "Value-Based Pricing Implementation": [{"source": "bio", "text": "pricing strategy for an oncology portfolio"}]
+      },
+      "topics": {
+        "Oncology Pricing": [{"source": "bio", "text": "pricing strategy for an oncology portfolio"}],
+        "Revenue Cycle Redesign": [{"source": "bio", "text": "revenue cycle redesign for a UK hospital network"}],
+        "Diagnostics M&A": [{"source": "bio", "text": "diagnostics M&A deal"}],
+        "Series C Fundraising": [{"source": "bio", "text": "led a €40M Series C round"}],
+]
+```
+"""
+        "Commercial Integration": [{"source": "bio", "text": "post-merger commercial integration"}],
+        "TAM Assessment": [{"source": "linkedin_headline", "text": "Commercial Due Diligence"}]
+      }
+    }
+  }

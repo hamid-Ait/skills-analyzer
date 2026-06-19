@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import api from './client'
-import type { JobDetail, CompanyDetail, PersonList, SkillsMatrix, AnalyticsOverview, HeatmapData, GlobalPersonList, CostSummary } from './types'
+import type { JobDetail, CompanyDetail, PersonDetail, PersonList, SkillsMatrix, AnalyticsOverview, HeatmapData, GlobalPersonList, CostSummary, AnalysisRun, QASummary, QAIssueList, QAReanalyzeResult } from './types'
 
 export function usePollingJob(jobId: string | null, intervalMs = 60000) {
   const [job, setJob] = useState<JobDetail | null>(null)
@@ -78,6 +78,23 @@ export function usePeople(companyId: string | null, page = 1, pageSize = 50, sea
   }, [companyId, page, pageSize, search])
 
   return { data, loading }
+}
+
+export function usePerson(personId: string | null) {
+  const [person, setPerson] = useState<PersonDetail | null>(null)
+  const [loading, setLoading] = useState(false)
+
+  useEffect(() => {
+    if (!personId) { setPerson(null); return }
+    setLoading(true)
+    api
+      .get<PersonDetail>(`/people/${personId}`)
+      .then(({ data }) => setPerson(data))
+      .catch(console.error)
+      .finally(() => setLoading(false))
+  }, [personId])
+
+  return { person, loading }
 }
 
 export function useSkillsMatrix(companyId: string | null) {
@@ -158,6 +175,55 @@ export function useGlobalSearch(
   return { data, loading }
 }
 
+export async function reanalyzePerson(personId: string): Promise<{ status: string; person_id: string }> {
+  const { data } = await api.post(`/people/${personId}/reanalyze`)
+  return data
+}
+
+export async function analyzePersonWith(personId: string, provider: string, model?: string): Promise<AnalysisRun> {
+  const { data } = await api.post(`/people/${personId}/analyze-with`, { provider, model: model || undefined })
+  return data
+}
+
+export interface ProviderInfo {
+  provider: string
+  default_model: string
+}
+
+export function useProviders() {
+  const [providers, setProviders] = useState<ProviderInfo[]>([])
+
+  useEffect(() => {
+    api
+      .get<ProviderInfo[]>('/providers')
+      .then(({ data }) => setProviders(data))
+      .catch(console.error)
+  }, [])
+
+  return providers
+}
+
+export function useAnalysisRuns(personId: string | null) {
+  const [runs, setRuns] = useState<AnalysisRun[]>([])
+  const [loading, setLoading] = useState(false)
+
+  const refresh = useCallback(() => {
+    if (!personId) return
+    setLoading(true)
+    api
+      .get<AnalysisRun[]>(`/people/${personId}/analysis-runs`)
+      .then(({ data }) => setRuns(data))
+      .catch(console.error)
+      .finally(() => setLoading(false))
+  }, [personId])
+
+  useEffect(() => {
+    refresh()
+  }, [refresh])
+
+  return { runs, loading, refresh }
+}
+
 export function useCostSummary(days = 30) {
   const [data, setData] = useState<CostSummary | null>(null)
   const [loading, setLoading] = useState(false)
@@ -172,4 +238,57 @@ export function useCostSummary(days = 30) {
   }, [days])
 
   return { data, loading }
+}
+
+export function useQASummary(companyId?: string) {
+  const [data, setData] = useState<QASummary | null>(null)
+  const [loading, setLoading] = useState(false)
+
+  useEffect(() => {
+    setLoading(true)
+    const params: Record<string, string> = {}
+    if (companyId) params.company_id = companyId
+    api
+      .get<QASummary>('/qa/summary', { params })
+      .then(({ data }) => setData(data))
+      .catch(console.error)
+      .finally(() => setLoading(false))
+  }, [companyId])
+
+  return { data, loading }
+}
+
+export async function qaReanalyze(
+  filters: { company_id?: string; status?: string; issue_type?: string },
+): Promise<QAReanalyzeResult> {
+  const { data } = await api.post<QAReanalyzeResult>('/qa/reanalyze', filters)
+  return data
+}
+
+export function useQAIssues(
+  companyId?: string,
+  status?: string,
+  issueType?: string,
+  page = 1,
+  pageSize = 50,
+) {
+  const [data, setData] = useState<QAIssueList | null>(null)
+  const [loading, setLoading] = useState(false)
+
+  const refresh = useCallback(() => {
+    setLoading(true)
+    const params: Record<string, string | number> = { page, page_size: pageSize }
+    if (companyId) params.company_id = companyId
+    if (status) params.status = status
+    if (issueType) params.issue_type = issueType
+    api
+      .get<QAIssueList>('/qa/issues', { params })
+      .then(({ data }) => setData(data))
+      .catch(console.error)
+      .finally(() => setLoading(false))
+  }, [companyId, status, issueType, page, pageSize])
+
+  useEffect(() => { refresh() }, [refresh])
+
+  return { data, loading, refresh }
 }

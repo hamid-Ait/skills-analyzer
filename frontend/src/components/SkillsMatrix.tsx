@@ -78,16 +78,16 @@ export default function SkillsMatrix({ companyId }: { companyId: string }) {
       {/* Sectors and Geographies side by side */}
       <Box sx={{ display: 'flex', gap: 3, flexWrap: 'wrap', mb: 4 }}>
         {matrix.sectors.length > 0 && (
-          <Box sx={{ flex: 1, minWidth: 350 }}>
+          <Box sx={{ flex: 1, minWidth: 400 }}>
             <Typography variant="h6" gutterBottom>
               Sectors
             </Typography>
-            <Box sx={{ width: '100%', height: 300 }}>
+            <Box sx={{ width: '100%', height: Math.max(300, matrix.sectors.length * 28) }}>
               <ResponsiveContainer>
-                <BarChart data={matrix.sectors} margin={{ top: 5, right: 30, left: 100, bottom: 5 }} layout="vertical">
+                <BarChart data={matrix.sectors} margin={{ top: 5, right: 30, left: 20, bottom: 5 }} layout="vertical">
                   <CartesianGrid strokeDasharray="3 3" />
                   <XAxis type="number" />
-                  <YAxis type="category" dataKey="name" width={100} tick={{ fontSize: 12 }} />
+                  <YAxis type="category" dataKey="name" width={180} tick={{ fontSize: 11 }} />
                   <Tooltip />
                   <Bar dataKey="count" fill="#7c4dff" radius={[0, 4, 4, 0]} />
                 </BarChart>
@@ -97,16 +97,16 @@ export default function SkillsMatrix({ companyId }: { companyId: string }) {
         )}
 
         {matrix.geographies.length > 0 && (
-          <Box sx={{ flex: 1, minWidth: 350 }}>
+          <Box sx={{ flex: 1, minWidth: 400 }}>
             <Typography variant="h6" gutterBottom>
               Geographies
             </Typography>
-            <Box sx={{ width: '100%', height: 300 }}>
+            <Box sx={{ width: '100%', height: Math.max(300, matrix.geographies.length * 28) }}>
               <ResponsiveContainer>
-                <BarChart data={matrix.geographies} margin={{ top: 5, right: 30, left: 120, bottom: 5 }} layout="vertical">
+                <BarChart data={matrix.geographies} margin={{ top: 5, right: 30, left: 20, bottom: 5 }} layout="vertical">
                   <CartesianGrid strokeDasharray="3 3" />
                   <XAxis type="number" />
-                  <YAxis type="category" dataKey="name" width={110} tick={{ fontSize: 12 }} />
+                  <YAxis type="category" dataKey="name" width={180} tick={{ fontSize: 11 }} />
                   <Tooltip />
                   <Bar dataKey="count" fill="#00bcd4" radius={[0, 4, 4, 0]} />
                 </BarChart>
