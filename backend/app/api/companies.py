@@ -153,6 +153,8 @@ def get_company(company_id: UUID, db: Session = Depends(get_db)):
 
 class RetryRequest(BaseModel):
     mode: str = "rescrape"  # "resume", "rescrape", "reanalyze", "reenrich"
+    provider: str | None = None
+    model: str | None = None
 
 
 class RetryResponse(BaseModel):
@@ -247,8 +249,11 @@ def retry_company(company_id: UUID, body: RetryRequest, db: Session = Depends(ge
         db.commit()
 
         from app.tasks.analyze_task import analyze_expertise_batch
-        analyze_expertise_batch.delay(str(company_id), person_ids)
-        return RetryResponse(status="ok", message=f"Re-analyzing {len(person_ids)} people")
+        analyze_expertise_batch.delay(str(company_id), person_ids,
+                                      provider_name=body.provider or None,
+                                      model=body.model or None)
+        provider_label = f" using {body.provider}" if body.provider else ""
+        return RetryResponse(status="ok", message=f"Re-analyzing {len(person_ids)} people{provider_label}")
 
     elif body.mode == "analyze_missing":
         # Only analyze people who don't have expertise yet
