@@ -1,6 +1,7 @@
 import json
 import logging
 import os
+import re
 from abc import ABC, abstractmethod
 
 from app.config import settings
@@ -499,11 +500,18 @@ def _extract_complete_objects(text: str) -> list[dict]:
 def _parse_llm_response(raw_response: str) -> list[dict]:
     """Parse LLM JSON response, handling markdown fences and truncated output."""
     cleaned = raw_response.strip()
-    if cleaned.startswith("```"):
+
+    # Extract content from the first markdown code fence (handles ```json, ```, extra trailing text)
+    # Use [^\n]* (not \s*) after the language tag so we don't skip past blank lines inside the JSON
+    fence_match = re.search(r"```(?:json)?[^\n]*\n([\s\S]*?)\n[ \t]*```", cleaned)
+    if fence_match:
+        cleaned = fence_match.group(1).strip()
+    elif cleaned.startswith("```"):
+        # Fallback: strip opening fence line only
         cleaned = cleaned.split("\n", 1)[1] if "\n" in cleaned else cleaned[3:]
-    if cleaned.endswith("```"):
-        cleaned = cleaned[:-3]
-    cleaned = cleaned.strip()
+        if cleaned.endswith("```"):
+            cleaned = cleaned[:-3]
+        cleaned = cleaned.strip()
 
     # 1. Happy path — full valid JSON
     try:
@@ -516,15 +524,40 @@ def _parse_llm_response(raw_response: str) -> list[dict]:
     except json.JSONDecodeError:
         pass
 
-    # 2. Array bounds recovery (handles extra text before/after)
-    start = cleaned.find("[")
-    end = cleaned.rfind("]")
-    if start != -1 and end != -1 and end > start:
-        try:
-            results = json.loads(cleaned[start : end + 1])
-            return results if isinstance(results, list) else []
-        except json.JSONDecodeError:
-            pass
+    # 2. Array bounds recovery — walk brackets to find the matching ']' for the first '['
+    # (rfind would break if DeepSeek appends explanation text that contains ']' characters)
+    arr_start = cleaned.find("[")
+    if arr_start != -1:
+        depth = 0
+        arr_end = -1
+        in_str = False
+        escape_next = False
+        for idx in range(arr_start, len(cleaned)):
+            ch = cleaned[idx]
+            if escape_next:
+                escape_next = False
+                continue
+            if ch == "\\" and in_str:
+                escape_next = True
+                continue
+            if ch == '"':
+                in_str = not in_str
+                continue
+            if in_str:
+                continue
+            if ch == "[":
+                depth += 1
+            elif ch == "]":
+                depth -= 1
+                if depth == 0:
+                    arr_end = idx
+                    break
+        if arr_end != -1:
+            try:
+                results = json.loads(cleaned[arr_start : arr_end + 1])
+                return results if isinstance(results, list) else []
+            except json.JSONDecodeError:
+                pass
 
     # 3. Truncated output recovery — extract every complete object found
     objects = _extract_complete_objects(cleaned)

@@ -8,7 +8,7 @@ from app.config import settings
 from app.database import SessionLocal
 from app.models import Job, Company, Person
 from app.services.expertise_analyzer import (
-    format_people_for_analysis, get_provider,
+    format_people_for_analysis, get_provider, get_provider_by_name,
     _parse_llm_response, _normalize_name,
     EXPERTISE_SYSTEM_PROMPT, SECTOR_VOCAB, EXPERTISE_CATEGORIES,
 )
@@ -32,7 +32,8 @@ _CATEGORY_KEYWORDS: dict[str, list[str]] = {
     ],
     "People and Talent": [
         # Must indicate an HR/talent/people advisory focus — not just mentioning people
-        # Avoid generic consulting terms like "human capital" that appear broadly
+        # Covers both specialist HR firms and consulting practice-group language
+        # Practice-group language (consulting firms)
         "people & organization", "people and organization",
         "talent management practice", "talent advisory",
         "human resources practice", "hr practice", "hr leader",
@@ -40,6 +41,19 @@ _CATEGORY_KEYWORDS: dict[str, list[str]] = {
         "chief people officer", "chief human resources",
         "workforce planning", "people officer",
         "organizational effectiveness practice", "talent practice",
+        # Direct HR vocabulary (specialist HR firms and in-house HR leaders)
+        "human resources", "hr consultant", "hr director", "hr manager",
+        "hr business partner", "hrbp", "hr transformation", "hr advisory",
+        "talent acquisition", "talent development", "talent management",
+        "recruitment", "executive search", "headhunting",
+        "learning and development", "l&d", "training and development",
+        "employee relations", "employee engagement",
+        "organizational development", "organisation development",
+        "people analytics", "workforce analytics",
+        "people director", "hr specialist", "hr generalist",
+        "compensation and benefits", "total rewards",
+        "diversity, equity", "diversity and inclusion",
+        "succession planning", "performance management",
     ],
     "Environment (ESG)": [
         # Must indicate ESG/sustainability advisory focus — not firm-wide mentions
@@ -286,7 +300,8 @@ def _apply_result(person: Person, result: dict):
 
 
 @celery_app.task(bind=True, max_retries=1, time_limit=72000)
-def analyze_expertise_batch(self, company_id: str, person_ids: list[str]):
+def analyze_expertise_batch(self, company_id: str, person_ids: list[str],
+                            provider_name: str | None = None, model: str | None = None):
     """Analyze expertise using hybrid keyword + LLM approach.
 
     For each batch:
@@ -316,7 +331,7 @@ def analyze_expertise_batch(self, company_id: str, person_ids: list[str]):
             keyword_results[norm] = match_person_from_db(p)
 
         # Step 2: Process in LLM batches
-        provider = get_provider()
+        provider = get_provider_by_name(provider_name, model=model) if provider_name else get_provider()
         total_updated = 0
         batch_size = provider.batch_size
         total_batches = (len(people) + batch_size - 1) // batch_size

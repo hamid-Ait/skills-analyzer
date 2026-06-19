@@ -11,10 +11,10 @@ class Settings(BaseSettings):
     QWEN_API_KEY: str = ""
     APIFY_API_TOKEN: str = ""
     LLM_PROVIDER: str = "gemini"  # "claude", "openai", or "gemini"
-    LLM_MODEL_CLAUDE: str = "claude-sonnet-4-20250514"
-    LLM_MODEL_OPENAI: str = "gpt-5-mini"
-    LLM_MODEL_GEMINI: str = "gemini-2.5-flash-lite"
-    LLM_MODEL_DEEPSEEK: str = "deepseek-chat"
+    LLM_MODEL_CLAUDE: str = "claude-haiku-4-5-20251001"#"claude-sonnet-4-20250514"
+    LLM_MODEL_OPENAI: str = "gpt-4o"
+    LLM_MODEL_GEMINI: str = "gemini-2.5-flash"
+    LLM_MODEL_DEEPSEEK: str = "deepseek-v4-flash"
     LLM_MODEL_QWEN: str = "qwen3.6-plus"
     DEEPSEEK_API_KEY: str = ""
     GOOGLE_API_KEY: str = ""
@@ -27,9 +27,10 @@ class Settings(BaseSettings):
     # QA validator thresholds (configurable via env vars)
     QA_MAX_L1_CATEGORIES: int = 4
     QA_MAX_DECLARED_CAPABILITIES: int = 8
-    QA_MAX_INFERRED: int = 5
+    QA_MAX_INFERRED: int = 12
     QA_MAX_TOPICS: int = 20
     PROXY_URLS: Optional[str] = None
+    SCRAPE_MAX_PROFILES: int = 10000
 
     class Config:
         env_file = str(Path(__file__).parent.parent.parent / ".env")

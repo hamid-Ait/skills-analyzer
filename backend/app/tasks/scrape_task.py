@@ -133,6 +133,7 @@ def scrape_company(self, company_id: str, discover: bool = True,
             team_url, client, session,
             follow_profiles=follow_profiles,
             resume_state=resume_state,
+            max_profiles=settings.SCRAPE_MAX_PROFILES,
         )
 
         # Drain and log accumulated LLM usage from scraping agent
@@ -171,6 +172,11 @@ def scrape_company(self, company_id: str, discover: bool = True,
         image_urls = [p.get("image_url") for p in people_data if p.get("image_url")]
         duplicate_images = {url for url in image_urls if image_urls.count(url) > 1}
 
+        # Deduplicate phone numbers — if the same number appears for multiple people,
+        # it's a company/office number shown on every profile page, not a personal number.
+        phone_numbers = [p.get("phone") for p in people_data if p.get("phone")]
+        duplicate_phones = {num for num in phone_numbers if phone_numbers.count(num) > 1}
+
         # Build dedup set from existing DB records to avoid duplicates on resume
         existing_people = (
             db.query(Person.name, Person.title)
@@ -201,7 +207,7 @@ def scrape_company(self, company_id: str, discover: bool = True,
                 department=p.get("department"),
                 bio=p.get("bio"),
                 email=p.get("email"),
-                phone=p.get("phone"),
+                phone=p.get("phone") if p.get("phone") not in duplicate_phones else None,
                 linkedin_url=p.get("linkedin_url"),
                 twitter_url=p.get("twitter_url"),
                 other_url=p.get("other_url"),

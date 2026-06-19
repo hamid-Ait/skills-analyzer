@@ -423,6 +423,26 @@ def simplify_html(html: str, max_chars: int = MAX_HTML_CHARS) -> str:
         if not tag.find(["article"]) and not tag.select(".views-row"):
             tag.decompose()
 
+    # Strip search filter / facet sidebars — these can contain hundreds of
+    # filter links (e.g. BCG: 660 facet elements) that exhaust the token budget
+    # before the actual person cards are reached. Facet widgets never contain
+    # person data. Target: Algolia/SearchKit sk-* components, generic facet
+    # containers, and custom elements like <ps-search-filters>.
+    # Strip search filter / facet sidebars — these can hold hundreds of
+    # filter links (BCG: 660 × 2 copies = 584k chars of facets) that exhaust
+    # the token budget before the actual person cards are reached.
+    # Target the FACET CONTAINERS, not their outer wrappers (which may also
+    # contain the person card section as a sibling).
+    _FACET_PATTERN = _re.compile(
+        r"search.?facets?.?wrapper|facet.?panel|filter.?panel|filter.?sidebar|"
+        r"sk-hierarchical|sk-numeric|sk-refinement|sk-range|"
+        r"refinement.?list|facet.?list",
+        _re.I,
+    )
+    # Collect matching tags first, then decompose (safe: pre-computed list)
+    for tag in list(soup.find_all(class_=_FACET_PATTERN)):
+        tag.decompose()
+
     # NOTE: We intentionally do NOT strip display:none elements here.
     # Many team pages hide bio/contact details in collapsed child elements
     # (modals, drawers, accordions) that are revealed on card click.
@@ -458,10 +478,31 @@ def simplify_html(html: str, max_chars: int = MAX_HTML_CHARS) -> str:
         clean += json_section
         log.info(f"  HTML: appended {len(embedded_json):,} chars of embedded JSON data")
 
+    # Rescue pagination links before truncating — they often live at the very
+    # end of large pages (e.g. BCG's 1.6 MB HTML has rel="next" at byte 1,596,248).
+    # Extract them from the fully-parsed soup and append as a comment so the LLM
+    # always sees the pagination signal even after the main content is cut.
+    pagination_hint = ""
+    next_tags = soup.find_all("a", rel=lambda r: r and "next" in r)
+    next_tags += soup.find_all("link", rel=lambda r: r and "next" in r)
+    if next_tags:
+        hrefs = [t.get("href") for t in next_tags if t.get("href")]
+        if hrefs:
+            pagination_hint = (
+                "\n\n<!-- PAGINATION HINT (extracted from full page before truncation):\n"
+                + "\n".join(f'  <a rel="next" href="{h}"/>' for h in hrefs[:3])
+                + "\n-->"
+            )
+
     orig_len = len(clean)
     if len(clean) > max_chars:
         log.warning(f"  HTML truncated {orig_len:,} -> {max_chars:,} chars")
         clean = clean[:max_chars]
+
+    if pagination_hint:
+        clean += pagination_hint
+        log.info(f"  HTML: injected rel=next pagination hint")
+
     log.info(f"  HTML: {orig_len:,} -> {len(clean):,} chars sent to LLM")
     return clean
 
@@ -521,11 +562,31 @@ Given a URL and a cleaned HTML snippet you will:
                    the name, or "Read more" / "View profile" / "Learn more" anchors.
                    Resolve relative hrefs to absolute using the page URL.
 
+                   WRAPPING-A PATTERN (common on search/listing pages like BCG):
+                   The ENTIRE card is wrapped in a single <a> element:
+                     <a class="result-link" href="/people/john-smith">
+                       <div class="result-header"><h2>John Smith</h2></div>
+                     </a>
+                   In this case:
+                   • CARD SELECTOR: soup.select("a.result-link") — the <a> IS the card
+                   • profile_url: urljoin(url, card.get("href")) — href is on the <a> itself
+                   • name: card.select_one(".result-header h2") or card.select_one("h2")
+                     DO NOT use .get_text() on the card itself — it concatenates all children
+                   • DO NOT search for a nested <a> inside the card — there is none
+                   BCG concrete example:
+                     cards = soup.select('a.result-link')
+                     for card in cards:
+                         name_el = card.select_one(".result-header h2") or card.select_one("h2")
+                         if not name_el: continue
+                         name = name_el.get_text(strip=True)
+                         profile_url = urljoin(url, card.get("href"))
+
                    CRITICAL — a profile_url must be about THIS specific person:
                    • The URL path typically contains part of the person's name
                      (e.g. /people/john-smith, /team/jane-doe)
                    • It lives under paths like /people/, /team/, /staff/,
-                     /our-people/, /leadership/, /about/team/, /consultants/, etc.
+                     /our-people/, /leadership/, /about/team/, /about/people/,
+                     /consultants/, /experts/, etc.
                    • NEVER set profile_url to industry, service, capability,
                      insight, or topic pages (paths containing /industries/,
                      /services/, /insights/, /capabilities/, /sectors/, /work/,
@@ -549,6 +610,13 @@ Given a URL and a cleaned HTML snippet you will:
      like "content" or "text" — those catch buttons, navigation, and CTA labels.
    - Ignore navigation menus, filter widgets, and sidebar links — only extract
      records from the main people/team listing area of the page.
+   - TESTIMONIAL / QUOTE CAROUSELS are marketing content, NOT people directories.
+     Skip any container whose class or data attribute contains "testimonial",
+     "quote", "swiper-testimonial", or has data-quote-carousel.  Even when
+     these sliders show a person's name, photo, title and a "View Profile" link,
+     they are promotional samples — not the authoritative staff listing.
+     Detection: soup.select(".swiper-testimonial, [data-quote-carousel]") and
+     similar — decompose() those before looking for person cards.
 
 2. HIDDEN / CLICK-TO-EXPAND DETAIL PANELS
    Many team pages show only the name + photo in the visible card, and hide
@@ -630,6 +698,11 @@ Given a URL and a cleaned HTML snippet you will:
    - "path_segment" -- /team/page/2 or /team/start/24
    - "next_link"    -- <a rel="next"> or visible "Next" / "Load more" anchor
    - "cursor"       -- ?cursor=<token> from page body
+
+   IMPORTANT: The HTML may have been truncated to save tokens. A comment block at
+   the very end like <!-- PAGINATION HINT ... <a rel="next" href="..."/> ... -->
+   contains pagination links rescued from the full page. If you see it, use the
+   href to determine the strategy and param_name/param_step/param_start.
 
    For "query_param": param_start is the page value of the FIRST paginated URL
    (the one that matches the already-fetched base page). Check whether pagination
@@ -741,15 +814,18 @@ Fields to extract (use null for missing):
 
 name
   The person's full name is almost always in the only <h1> on the page.
+  BCG: h1.PersonHeader__name__non-local inside div.PersonHeader__name
 
 title / department
   Typically in a <h2>, <h3>, or <p> immediately following the <h1>, or
   inside a dedicated header/intro section. May be split: job title on one
   line, department/practice on another — capture both.
+  BCG: span.PersonHeader__name__primaryTitle (e.g. "Senior Advisor")
 
 location
   Often a <p> or <span> just below the title (city, country, office).
   May be labelled with "Location", "Office", or "Based in".
+  BCG: a.PersonHeader__officeTitle span (e.g. "Detroit")
 
 bio
   Look for a rich-text / content container. Try selectors in order with
@@ -773,56 +849,64 @@ bio
   Collect ALL <p> tags inside and join with "\\n\\n" to preserve paragraphs.
   Strip HTML tags; use .get_text(separator=" ", strip=True) on each <p>.
 
-expertise (Drupal / consulting sites)
-  Look for <section class="profile-expertise"> or similar.
-  Inside it there are typically two sub-sections:
-    div.profile-expertise__industries  → list of industry labels
-    div.profile-expertise__capabilities → list of capability labels
-  Select only <a> tags from each sub-section — do NOT use "a, .field__item"
-  because that captures both the wrapper div and the inner link, doubling
-  every entry. Also filter out any <a> that is a button (class contains
-  "button") or whose text is "Read more" / "Read less".
+expertise (consulting / professional-services sites)
+  Find the expertise section in this priority order:
+    exp_section = (
+        soup.select_one(".PersonExpertise") or        # BCG
+        soup.select_one(".profile-expertise") or
+        soup.select_one("[class*='expertise']")
+    )
 
-  Correct pattern:
-    def _expertise_labels(section):
-        seen, labels = set(), []
-        for a in (section.select("a") if section else []):
-            cls = " ".join(a.get("class") or [])
-            text = a.get_text(strip=True)
-            if not text or "button" in cls or text.lower() in ("read more", "read less"):
-                continue
-            if text not in seen:
-                seen.add(text)
-                labels.append(text)
-        return labels
+  BCG pattern — flat <ul><li><a class="tag"> list, split by URL path:
+    industries:   <a> whose href contains "/industries/"
+    capabilities: <a> whose href contains "/capabilities/"
 
-    extra["expertise_industries"]   = _expertise_labels(soup.select_one(".profile-expertise__industries"))
-    extra["expertise_capabilities"] = _expertise_labels(soup.select_one(".profile-expertise__capabilities"))
+    ind_tags = [a.get_text(strip=True) for a in exp_section.select("a.tag")
+                if "/industries/" in (a.get("href") or "")]
+    cap_tags = [a.get_text(strip=True) for a in exp_section.select("a.tag")
+                if "/capabilities/" in (a.get("href") or "")]
+    # anything not matching either bucket goes into capabilities
+    other_tags = [a.get_text(strip=True) for a in exp_section.select("a.tag")
+                  if "/industries/" not in (a.get("href") or "")
+                  and "/capabilities/" not in (a.get("href") or "")]
+    cap_tags += other_tags
+    if ind_tags:
+        extra["expertise_industries"]   = ind_tags
+    if cap_tags:
+        extra["expertise_capabilities"] = cap_tags
 
-  If only one sub-section exists, store only that key.
+  Generic fallback (other sites with named sub-sections):
+    ind_sub  = exp_section.select_one("[class*='industr'], [class*='sector']") if exp_section else None
+    cap_sub  = exp_section.select_one("[class*='capabilit'], [class*='function']") if exp_section else None
+    If sub-sections found, extract <a>/<li> labels from each and store as
+    extra["expertise_industries"] / extra["expertise_capabilities"].
+    If no sub-sections, store all labels as extra["expertise_capabilities"].
+
+  Always skip <a>/<li> whose text is empty, "Read more", or "Read less".
 
 education
-  Look for a section whose heading text or class contains "education", "academic",
-  "qualifications", or "academic background". Common patterns:
-    <section class="profile-education"> or <div class="education-section">
-    or a <h2>/<h3> with text "Education" followed by list items.
-  Extract each qualification as a dict with these keys (null for missing):
-    { "degree": "MBA", "institution": "Harvard Business School", "year": "2005" }
-  Store as extra["education"] = [list of dicts].
-  If no education section is found, omit the key (do not store an empty list).
-
-  Pattern:
+  Find the education section in this priority order:
     edu_section = (
+        soup.select_one(".PersonEducation") or        # BCG
         soup.select_one(".profile-education") or
         soup.select_one("[class*='education']") or
         soup.find(lambda tag: tag.name in ("h2","h3","h4") and
                   "education" in tag.get_text(strip=True).lower())
     )
-    # If found via heading, use the following sibling ul/ol/div
+
+  BCG pattern — each <li> inside .List-items-item is one raw qualification string:
+    "MBA, finance and sales and marketing, Northwestern University, Kellogg School of Management"
+  Store each as: { "degree": null, "institution": null, "year": null, "raw": "<full text>" }
+
+  Generic pattern — same: iterate li/div items, store raw text as "raw" field.
+
+  Full pattern:
     education = []
-    for item in edu_section.select("li, .education-item, .qualification"):
-        text = item.get_text(" ", strip=True)
-        education.append({"degree": None, "institution": None, "year": None, "raw": text})
+    if edu_section:
+        for item in edu_section.select("li"):
+            text = item.get_text(" ", strip=True)
+            if text:
+                education.append({"degree": None, "institution": None, "year": None, "raw": text})
     if education:
         extra["education"] = education
 
@@ -908,15 +992,17 @@ Extraction guidance (same patterns as PROFILE_PAGE_PROMPT):
   linkedin_url / twitter_url → <a> whose href contains "linkedin.com/in/"
                (personal profile only — skip linkedin.com/company/... pages) or
                "twitter.com/" / "x.com/"
-  extra      → if a <section class="profile-expertise"> exists, extract:
-               expertise_industries from .profile-expertise__industries a
-               expertise_capabilities from .profile-expertise__capabilities a
-               Use only <a> tags (not ".field__item") to avoid duplicates.
-               Skip <a> with class "button" or text "Read more"/"Read less".
-             → if an education section exists (class/heading contains "education",
-               "academic", "qualifications"), extract each entry as a dict:
-               { "degree": ..., "institution": ..., "year": ..., "raw": <full text> }
-               Store as extra["education"] = [list of dicts]. Omit key if absent.
+  extra      → expertise: exp_section = soup.select_one(".PersonExpertise") or
+                 soup.select_one(".profile-expertise") or soup.select_one("[class*='expertise']")
+               BCG: split a.tag links by href — "/industries/" → expertise_industries,
+               "/capabilities/" → expertise_capabilities (remaining go into capabilities).
+               Other sites: look for [class*='industr'] / [class*='capabilit'] sub-sections;
+               if absent, store all labels as expertise_capabilities.
+             → education: edu_section = soup.select_one(".PersonEducation") or
+                 soup.select_one(".profile-education") or soup.select_one("[class*='education']")
+               Iterate edu_section.select("li"), store each as:
+               {"degree": None, "institution": None, "year": None, "raw": <text>}
+               Store as extra["education"] = [list]. Omit key if list is empty.
 
 Reply with ONLY the function — no imports, no JSON block, no extra prose:
 
@@ -1116,8 +1202,11 @@ def _score_anchor(a, base_url: str) -> tuple[int, str]:
     if link_netloc != base_netloc:
         return 0, ""
 
-    # Skip obvious non-team paths
-    if any(bl in path_lower for bl in _PATH_BLOCKLIST):
+    # Skip obvious non-team paths — match on full path segments so that compound
+    # slugs like "search-people" or "our-insights" are not accidentally blocked
+    # by a term ("search", "insights") that appears only as a substring.
+    path_segments = set(path_lower.strip("/").split("/"))
+    if path_segments & _PATH_BLOCKLIST:
         return 0, ""
 
     # Skip story/sales/contact link text
@@ -1242,6 +1331,60 @@ def discover_team_url(client: LLMClient, base_url: str,
 
     log.info("  [DISCOVER] No team page found")
     return None
+
+
+def discover_category_urls(html: str, base_url: str) -> list[str]:
+    """
+    Detect if a people/team page is a category index (shows sub-section links
+    instead of actual person listings).
+
+    Looks for anchor links that are direct sub-paths of base_url, share the same
+    path depth, and are not in the non-person path blocklist.  Returns the list
+    of category URLs when ≥2 are found, otherwise returns [].
+
+    Examples:
+      base_url = https://www.teneo.com/people
+      finds /people/financial-advisory, /people/management-consulting, … → returns all 5
+    """
+    from bs4 import BeautifulSoup
+
+    soup = BeautifulSoup(html, "lxml")
+    parsed_base = urlparse(base_url)
+    base_path   = parsed_base.path.rstrip("/")
+
+    candidates: dict[str, str] = {}  # abs_url → sub-segment
+
+    for a in soup.find_all("a", href=True):
+        abs_url = urljoin(base_url, a["href"])
+        parsed  = urlparse(abs_url)
+
+        # Same scheme + domain only (strip www. to tolerate redirects)
+        if parsed.netloc.removeprefix("www.") != parsed_base.netloc.removeprefix("www."):
+            continue
+
+        link_path = parsed.path.rstrip("/")
+
+        # Must be exactly one level deeper than base_path
+        if not link_path.startswith(base_path + "/"):
+            continue
+        sub = link_path[len(base_path):].strip("/")
+        if "/" in sub or not sub:
+            continue  # skip deeper or identical paths
+
+        # Skip non-person path segments — exact segment match only, not substring
+        if sub.lower() in _PATH_BLOCKLIST:
+            continue
+
+        candidates[abs_url] = sub
+
+    if len(candidates) < 2:
+        return []
+
+    log.info(
+        f"  [CATEGORY] Category index detected — {len(candidates)} sub-sections: "
+        + ", ".join(candidates.values())
+    )
+    return list(candidates.keys())
 
 
 def parse_llm_response(text: str) -> tuple[str, dict]:
@@ -1404,11 +1547,13 @@ def normalise_person(raw: dict, source_url: str) -> dict:
 
     # Drop profile_url values that point to non-person pages
     # (industry, service, insight, capability, topic pages, etc.)
+    # NOTE: "about" is intentionally excluded — many firms put their people
+    # under /about/people/... or /about/us/team/... (e.g. BCG: /about/people/experts/)
     _NON_PERSON_PATH_SEGMENTS = {
         "industries", "industry", "services", "service", "insights", "insight",
         "capabilities", "capability", "sectors", "sector", "solutions",
         "work", "news", "blog", "press", "events", "resources", "publications",
-        "media", "about", "contact", "careers", "jobs",
+        "media", "contact", "careers", "jobs",
     }
     purl = person.get("profile_url")
     if purl:
@@ -1846,6 +1991,7 @@ def scrape_site(
     no_follow_profiles: bool = False,
     max_profiles: int = 10000,
     resume_state: dict | None = None,
+    _category_depth: int = 0,
 ) -> tuple[list[dict], dict]:
     """Full pipeline for one site: fetch -> LLM -> paginate -> normalise -> (optionally enrich)."""
 
@@ -2084,8 +2230,14 @@ def scrape_site(
 
             # Extend and persist any records found this page
             if records:
-                all_records.extend(records)
-                append_page_records(slug, records)
+                remaining = max_profiles - len(all_records)
+                to_add = records[:remaining]
+                all_records.extend(to_add)
+                append_page_records(slug, to_add)
+                if len(all_records) >= max_profiles:
+                    log.info(f"  Reached max_profiles={max_profiles} — stopping pagination")
+                    completed_naturally = True
+                    break
 
             # Save incremental state after every page
             last_next_url = None
@@ -2161,6 +2313,36 @@ def scrape_site(
                     log.warning(f"  [RETRY] Page fetched but no records extracted")
             except Exception as exc:
                 log.warning(f"  [RETRY] Failed: {exc}")
+
+    # Step 2.6 — Category index detection
+    # When we finish with 0 people at the top level (not a recursive call), check
+    # whether the page is a category index that links to sub-sections with people.
+    # This handles sites like teneo.com where /people shows 5 category cards
+    # (financial-advisory, management-consulting, …) with no people directly listed.
+    if len(all_records) <= 5 and html1 is not None and _category_depth == 0:
+        cat_urls = discover_category_urls(html1, url)
+        if cat_urls:
+            log.info(f"  [CATEGORY] Scraping {len(cat_urls)} category sub-sections ...")
+            # Delete the script generated for the (useless) category index page so
+            # the first category page triggers a fresh LLM generation.  Subsequent
+            # categories will reuse that script (same page layout).
+            if script_path.exists():
+                script_path.unlink(missing_ok=True)
+                log.info(f"  [CATEGORY] Removed category-index script {script_path.name}")
+            for i, cat_url in enumerate(cat_urls):
+                log.info(f"  [CATEGORY] → {cat_url} ({i + 1}/{len(cat_urls)})")
+                try:
+                    cat_people, _ = scrape_site(
+                        cat_url, client, session,
+                        follow_profiles=follow_profiles,
+                        no_follow_profiles=no_follow_profiles,
+                        max_profiles=max(0, max_profiles - len(all_records)),
+                        _category_depth=1,
+                    )
+                    all_records.extend(cat_people)
+                    log.info(f"  [CATEGORY] Got {len(cat_people)} people from {cat_url}")
+                except Exception as exc:
+                    log.warning(f"  [CATEGORY] Failed to scrape {cat_url}: {exc}")
 
     # Step 3 — normalise to canonical people schema
     all_records = normalise_people(all_records, url)
@@ -2277,6 +2459,10 @@ def scrape_site(
                 log.info(f"  [PROFILE-FN] scrape_profile_page() added to {script_path.name}")
             except Exception as exc:
                 log.warning(f"  [PROFILE-FN] Probe failed — enrichment will use fallback: {exc}")
+
+    # Cap total records before enrichment
+    if len(all_records) > max_profiles:
+        all_records = all_records[:max_profiles]
 
     # Step 4 — enrich from individual profile pages
     # Auto-triggered when the LLM detected profile links (has_profile_pages=True).
