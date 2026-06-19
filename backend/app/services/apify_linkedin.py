@@ -1,9 +1,28 @@
 import logging
-from typing import Optional
+from typing import Any, Optional
 
 from app.config import settings
 
 log = logging.getLogger(__name__)
+
+
+def _run_dataset_id(run) -> str | None:
+    if run is None:
+        return None
+    if isinstance(run, dict):
+        return run.get("defaultDatasetId")
+    return getattr(run, "default_dataset_id", None) or getattr(run, "defaultDatasetId", None)
+
+
+def _strip_nulls(obj: Any) -> Any:
+    """Recursively remove null bytes (\\u0000) that PostgreSQL rejects in text/JSONB."""
+    if isinstance(obj, str):
+        return obj.replace("\x00", "")
+    if isinstance(obj, dict):
+        return {k: _strip_nulls(v) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [_strip_nulls(v) for v in obj]
+    return obj
 
 
 class ApifyLinkedInClient:
@@ -33,7 +52,7 @@ class ApifyLinkedInClient:
             }
             run = self.client.actor(self.ACTOR_ID).call(run_input=run_input)
             self._last_run = run
-            dataset = self.client.dataset(run["defaultDatasetId"])
+            dataset = self.client.dataset(_run_dataset_id(run))
             items = list(dataset.iterate_items())
             log.info(f"Apify returned {len(items)} profiles")
             return items
@@ -87,7 +106,7 @@ class ApifyLinkedInClient:
         if not image_url:
             image_url = apify_data.get("photo")
 
-        return {
+        return _strip_nulls({
             "linkedin_headline": headline,
             "linkedin_summary": summary,
             "linkedin_experience": experience,
@@ -95,4 +114,4 @@ class ApifyLinkedInClient:
             "linkedin_skills": skills,
             "location": location,
             "image_url": image_url,
-        }
+        })

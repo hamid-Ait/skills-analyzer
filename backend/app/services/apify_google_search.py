@@ -8,6 +8,20 @@ from app.config import settings
 log = logging.getLogger(__name__)
 
 
+def _run_dataset_id(run) -> str | None:
+    """Extract defaultDatasetId from an Apify run result.
+
+    apify_client <2.x returns a plain dict; newer versions return a typed Run
+    object.  This helper handles both shapes so callers don't need to care.
+    """
+    if run is None:
+        return None
+    if isinstance(run, dict):
+        return run.get("defaultDatasetId")
+    # Typed object: try snake_case first (new SDK), then camelCase fallback
+    return getattr(run, "default_dataset_id", None) or getattr(run, "defaultDatasetId", None)
+
+
 class ApifyLinkedInEmployeesClient:
     """Client for Apify harvestapi/linkedin-company-employees actor."""
 
@@ -40,7 +54,7 @@ class ApifyLinkedInEmployeesClient:
             }
             run = self.client.actor(self.GOOGLE_ACTOR_ID).call(run_input=run_input)
             self._last_run = run
-            dataset = self.client.dataset(run["defaultDatasetId"])
+            dataset = self.client.dataset(_run_dataset_id(run))
 
             for item in dataset.iterate_items():
                 for result in item.get("organicResults", []):
@@ -85,7 +99,7 @@ class ApifyLinkedInEmployeesClient:
             }
             run = self.client.actor(self.ACTOR_ID).call(run_input=run_input)
             self._last_run = run
-            dataset = self.client.dataset(run["defaultDatasetId"])
+            dataset = self.client.dataset(_run_dataset_id(run))
             items = list(dataset.iterate_items())
 
             profiles = []
@@ -101,6 +115,82 @@ class ApifyLinkedInEmployeesClient:
             log.error(f"Apify LinkedIn employees search failed for {company_name}: {exc}")
             return []
 
+    def search_people_google_batch(
+        self,
+        person_names: list[str],
+        company_name: str,
+        batch_size: int = 25,
+    ) -> dict[str, str]:
+        """
+        Batch Google search for multiple people. Each person gets two queries
+        (with and without company qualifier). Processes in groups of batch_size.
+        Returns {person_name: linkedin_profile_url}.
+        """
+        results: dict[str, str] = {}
+        total_batches = -(-len(person_names) // batch_size)
+        for i in range(0, len(person_names), batch_size):
+            batch = person_names[i : i + batch_size]
+            batch_results = self._google_people_batch_call(batch, company_name)
+            results.update(batch_results)
+            log.info(
+                f"  Google batch {i // batch_size + 1}/{total_batches}: "
+                f"{len(batch_results)}/{len(batch)} resolved"
+            )
+        return results
+
+    def _google_people_batch_call(
+        self, person_names: list[str], company_name: str
+    ) -> dict[str, str]:
+        """
+        Execute one Google actor call sending two queries per person:
+          1) site:linkedin.com/in "Name" "Company"  — high-confidence (company visible on profile)
+          2) site:linkedin.com/in "Name"             — fallback for advisors/alumni whose
+             company association isn't in Google's indexed portion of their profile
+
+        Returns {person_name: linkedin_url}, preferring company-qualified matches.
+        """
+        lines = []
+        for name in person_names:
+            lines.append(f'site:linkedin.com/in "{name}" "{company_name}"')
+            lines.append(f'site:linkedin.com/in "{name}"')
+        queries = "\n".join(lines)
+
+        run_input = {
+            "queries": queries,
+            "maxPagesPerQuery": 1,
+            "resultsPerPage": 3,
+            "languageCode": "en",
+            "mobileResults": False,
+        }
+        run = self.client.actor(self.GOOGLE_ACTOR_ID).call(run_input=run_input)
+        self._last_run = run
+        dataset = self.client.dataset(_run_dataset_id(run))
+
+        # Collect results from both query types; prefer company-qualified match
+        qualified: dict[str, str] = {}
+        unqualified: dict[str, str] = {}
+        qualifier = f'"{company_name}"'
+
+        for item in dataset.iterate_items():
+            term = (item.get("searchQuery") or {}).get("term", "")
+            name_match = re.search(r'"([^"]+)"', term)
+            if not name_match:
+                continue
+            person_name = name_match.group(1)
+            target = qualified if qualifier in term else unqualified
+            if person_name in target:
+                continue  # already have a match for this person from this query type
+            for result in item.get("organicResults", []):
+                url = result.get("url", "")
+                if "linkedin.com/in/" in url:
+                    m = re.search(r"linkedin\.com/in/([^/?#]+)", url)
+                    if m:
+                        target[person_name] = f"https://www.linkedin.com/in/{m.group(1)}"
+                        break
+
+        # Merge: unqualified is the base, qualified overwrites (higher confidence)
+        return {**unqualified, **qualified}
+
     def search_person_by_name(self, person_name: str, company_linkedin_url: str) -> tuple[Optional[dict], dict]:
         """
         Search for a specific person by name within a company's LinkedIn employees.
@@ -114,7 +204,7 @@ class ApifyLinkedInEmployeesClient:
         }
         run = self.client.actor(self.ACTOR_ID).call(run_input=run_input)
         self._last_run = run
-        items = list(self.client.dataset(run["defaultDatasetId"]).iterate_items())
+        items = list(self.client.dataset(_run_dataset_id(run)).iterate_items())
         profile = self._parse_employee(items[0]) if items else None
         return profile, run
 
