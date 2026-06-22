@@ -1,11 +1,32 @@
 import logging
 import re
-from urllib.parse import urlparse
+import unicodedata
+from urllib.parse import urlparse, unquote
 from typing import Optional
 
 from app.config import settings
 
 log = logging.getLogger(__name__)
+
+_STOP_NAME_TOKENS = {"the", "and", "for", "von", "van", "de", "le", "la"}
+
+
+def _fold_ascii(text: str) -> str:
+    """Lowercase and strip accents so 'François' compares equal to 'francois'."""
+    nfkd = unicodedata.normalize("NFKD", text)
+    return nfkd.encode("ascii", "ignore").decode("ascii").lower()
+
+
+def _significant_tokens(text: str) -> list[str]:
+    """
+    De-accent, then split on any non-letter (spaces, hyphens, apostrophes, digits)
+    into significant tokens (≥3 chars, not a stop word). So "Marie-Laurence",
+    "O'Keeffe", and "Pálfi" all tokenize cleanly.
+    """
+    return [
+        t for t in re.split(r"[^a-z]+", _fold_ascii(text))
+        if len(t) >= 3 and t not in _STOP_NAME_TOKENS
+    ]
 
 
 def _run_dataset_id(run) -> str | None:
@@ -22,6 +43,81 @@ def _run_dataset_id(run) -> str | None:
     return getattr(run, "default_dataset_id", None) or getattr(run, "defaultDatasetId", None)
 
 
+def _token_matches_segment(token: str, segments: set[str]) -> bool:
+    """
+    True if a name token equals a slug segment, or shares a ≥3-char prefix with one
+    (nickname tolerance: rob~robert, elliot~elliott, katie~katherine).
+    """
+    for seg in segments:
+        if token == seg:
+            return True
+        shorter, longer = (token, seg) if len(token) <= len(seg) else (seg, token)
+        if len(shorter) >= 3 and longer.startswith(shorter):
+            return True
+    return False
+
+
+_GENERIC_COMPANY_TOKENS = {
+    "group", "llc", "ltd", "plc", "inc", "corp", "company", "partners",
+    "associates", "consulting", "consultants", "advisory", "advisors",
+    "services", "solutions", "global", "holdings", "international",
+}
+
+
+def _company_in_text(company_name: str, text: str) -> bool:
+    """
+    True if a distinctive company token appears in text (de-accented).
+
+    Generic corporate words (Group, Partners, Consulting, …) are ignored so the
+    check keys on the brand: "teneo" from "Teneo", "stratton" from "Stratton HR".
+    Used to verify a Google result actually belongs to the target company before
+    accepting it — name-in-slug alone can't tell two same-named people apart.
+
+    If the company name has no usable tokens, returns True (cannot verify → do not
+    block); if the text is empty, returns False (nothing to verify against).
+    """
+    haystack = _fold_ascii(text)
+    if not haystack.strip():
+        return False
+    tokens = [t for t in _significant_tokens(company_name) if t not in _GENERIC_COMPANY_TOKENS]
+    if not tokens:
+        tokens = _significant_tokens(company_name)
+    if not tokens:
+        return True
+    return any(t in haystack for t in tokens)
+
+
+def _slug_matches_name(slug: str, person_name: str) -> bool:
+    """
+    Return True if the LinkedIn profile slug plausibly belongs to person_name.
+
+    Requires BOTH a first-name and a last-name token to appear as hyphen-delimited
+    slug segments (with nickname/prefix tolerance). A single shared token — surname
+    OR first name alone — is NOT enough, because Google's `site:linkedin.com/in`
+    results routinely surface colleagues and relatives that share one name part,
+    producing wrong-profile assignments:
+
+      slug "douglas-adams-3a0"  person "Kristen Adams"     → False ❌ (surname only)
+      slug "alexandra-liveris"  person "Andrew Liveris"    → False ❌ (surname only)
+      slug "joe-burnett-cfa"    person "Joe Barry"         → False ❌ (first name only)
+      slug "rob-harding-162"    person "Robert Harding"    → True  ✅ (rob~robert + harding)
+      slug "elliott-grover-97"  person "Elliot Grover"     → True  ✅
+      slug "harriet-coley-"     person "Courtney Burgess"  → False ❌
+
+    Names with a single significant token fall back to requiring that one token.
+    Tokens are de-accented and the slug is URL-decoded first, so "François Dubois"
+    matches "francois-dubois" and "Petra Pálfi" matches "petra-p%C3%A1lfi".
+    """
+    segments = set(re.split(r"[^a-z0-9]+", _fold_ascii(unquote(slug))))
+    tokens = _significant_tokens(person_name)
+    if not tokens:
+        return False
+    if len(tokens) == 1:
+        return _token_matches_segment(tokens[0], segments)
+    first, last = tokens[0], tokens[-1]
+    return _token_matches_segment(first, segments) and _token_matches_segment(last, segments)
+
+
 class ApifyLinkedInEmployeesClient:
     """Client for Apify harvestapi/linkedin-company-employees actor."""
 
@@ -33,10 +129,17 @@ class ApifyLinkedInEmployeesClient:
         self.client = ApifyClient(api_token or settings.APIFY_API_TOKEN)
         self._last_run: dict | None = None
 
-    def _resolve_linkedin_company_url(self, company_name: str, company_url: str) -> Optional[str]:
+    def _resolve_linkedin_company_url(
+        self, company_name: str, company_url: str
+    ) -> tuple[Optional[str], Optional[str]]:
         """
-        Resolve a company website URL to its LinkedIn company page URL.
-        Uses a Google search: site:linkedin.com/company "company name"
+        Resolve a company website URL to its LinkedIn company page URL and display name.
+
+        Returns (linkedin_url, display_name). The display name is extracted from the
+        Google result title (e.g. "Stratton HR | LinkedIn" → "Stratton HR") and is
+        more reliable than the stored company name for use in people search queries —
+        especially when the stored name is a LinkedIn slug like "strattonhr" rather
+        than the human-readable "Stratton HR".
         """
         domain = urlparse(company_url).netloc or company_url
         domain = domain.replace("www.", "")
@@ -60,18 +163,24 @@ class ApifyLinkedInEmployeesClient:
                 for result in item.get("organicResults", []):
                     url = result.get("url", "")
                     if "linkedin.com/company/" in url:
-                        # Extract company slug and normalize to www.linkedin.com
                         match = re.search(r"linkedin\.com/company/([^/?#]+)", url)
                         if match:
                             slug = match.group(1)
                             linkedin_url = f"https://www.linkedin.com/company/{slug}"
-                            log.info(f"Resolved LinkedIn company URL: {linkedin_url}")
-                            return linkedin_url
+                            # Extract display name from title: "Stratton HR | LinkedIn"
+                            title = result.get("title", "")
+                            display_name = re.split(r"\s*[|\-–]\s*LinkedIn", title, maxsplit=1)[0].strip()
+                            display_name = display_name or None
+                            log.info(
+                                f"Resolved LinkedIn company URL: {linkedin_url} "
+                                f"(display name: {display_name!r})"
+                            )
+                            return linkedin_url, display_name
 
         except Exception as exc:
             log.error(f"Failed to resolve LinkedIn company URL for {company_name}: {exc}")
 
-        return None
+        return None, None
 
     def search_company_people(self, company_name: str, company_url: str,
                               max_results: int = 10000) -> list[dict]:
@@ -85,7 +194,7 @@ class ApifyLinkedInEmployeesClient:
         if "linkedin.com/company/" in company_url:
             linkedin_url = company_url
         else:
-            linkedin_url = self._resolve_linkedin_company_url(company_name, company_url)
+            linkedin_url, _ = self._resolve_linkedin_company_url(company_name, company_url)
             if not linkedin_url:
                 log.warning(f"Could not find LinkedIn company page for {company_name}")
                 return []
@@ -142,23 +251,32 @@ class ApifyLinkedInEmployeesClient:
         self, person_names: list[str], company_name: str
     ) -> dict[str, str]:
         """
-        Execute one Google actor call sending two queries per person:
-          1) site:linkedin.com/in "Name" "Company"  — high-confidence (company visible on profile)
-          2) site:linkedin.com/in "Name"             — fallback for advisors/alumni whose
-             company association isn't in Google's indexed portion of their profile
+        Execute one Google actor call with one company-qualified query per person:
+          site:linkedin.com/in "Name" "Company"
 
-        Returns {person_name: linkedin_url}, preferring company-qualified matches.
+        No unqualified fallback — unqualified queries return profiles where the
+        searched name appears as a mention (recommendation, colleague reference),
+        not as the profile owner, producing systematic false positives.
+
+        Each result is validated on two axes before being accepted:
+          1. _slug_matches_name — the URL slug must carry the person's name.
+          2. _company_in_text   — the company must appear in the result title/snippet.
+        The company check is what disambiguates two different people who share a name
+        (only one works at the target company); name-in-slug alone cannot. A final
+        cross-batch dedup then removes any URL assigned to multiple people.
+
+        Returns {person_name: linkedin_url}.
         """
-        lines = []
-        for name in person_names:
-            lines.append(f'site:linkedin.com/in "{name}" "{company_name}"')
-            lines.append(f'site:linkedin.com/in "{name}"')
+        lines = [
+            f'site:linkedin.com/in "{name}" "{company_name}"'
+            for name in person_names
+        ]
         queries = "\n".join(lines)
 
         run_input = {
             "queries": queries,
             "maxPagesPerQuery": 1,
-            "resultsPerPage": 3,
+            "resultsPerPage": 5,
             "languageCode": "en",
             "mobileResults": False,
         }
@@ -166,47 +284,92 @@ class ApifyLinkedInEmployeesClient:
         self._last_run = run
         dataset = self.client.dataset(_run_dataset_id(run))
 
-        # Collect results from both query types; prefer company-qualified match
-        qualified: dict[str, str] = {}
-        unqualified: dict[str, str] = {}
-        qualifier = f'"{company_name}"'
-
+        results: dict[str, str] = {}
         for item in dataset.iterate_items():
             term = (item.get("searchQuery") or {}).get("term", "")
             name_match = re.search(r'"([^"]+)"', term)
             if not name_match:
                 continue
             person_name = name_match.group(1)
-            target = qualified if qualifier in term else unqualified
-            if person_name in target:
-                continue  # already have a match for this person from this query type
+            if person_name in results:
+                continue
             for result in item.get("organicResults", []):
                 url = result.get("url", "")
-                if "linkedin.com/in/" in url:
-                    m = re.search(r"linkedin\.com/in/([^/?#]+)", url)
-                    if m:
-                        target[person_name] = f"https://www.linkedin.com/in/{m.group(1)}"
-                        break
+                if "linkedin.com/in/" not in url:
+                    continue
+                m = re.search(r"linkedin\.com/in/([^/?#]+)", url)
+                if not m or not _slug_matches_name(m.group(1), person_name):
+                    continue
+                snippet = " ".join(
+                    filter(
+                        None,
+                        [
+                            result.get("title", ""),
+                            result.get("description", ""),
+                            result.get("snippet", ""),
+                        ],
+                    )
+                )
+                if not _company_in_text(company_name, snippet):
+                    log.info(
+                        f"  Google: name matches but company {company_name!r} absent "
+                        f"in snippet for {person_name!r} — skipping {m.group(1)}"
+                    )
+                    continue
+                results[person_name] = f"https://www.linkedin.com/in/{m.group(1)}"
+                break
 
-        # Merge: unqualified is the base, qualified overwrites (higher confidence)
-        return {**unqualified, **qualified}
+        # Cross-batch dedup: if the same URL appears for multiple people it is a
+        # false positive for all but the one whose name actually matches the slug.
+        url_to_names: dict[str, list[str]] = {}
+        for name, url in results.items():
+            url_to_names.setdefault(url, []).append(name)
 
-    def search_person_by_name(self, person_name: str, company_linkedin_url: str) -> tuple[Optional[dict], dict]:
+        to_drop: list[str] = []
+        for url, names in url_to_names.items():
+            if len(names) == 1:
+                continue
+            slug_m = re.search(r"linkedin\.com/in/([^/?#]+)", url)
+            slug = slug_m.group(1) if slug_m else ""
+            real_owner = next(
+                (n for n in names if _slug_matches_name(slug, n)), None
+            )
+            for name in names:
+                if name != real_owner:
+                    log.warning(
+                        f"  Dropping duplicate URL for {name} -> {url} "
+                        f"(real owner: {real_owner!r})"
+                    )
+                    to_drop.append(name)
+
+        for name in to_drop:
+            results.pop(name, None)
+
+        return results
+
+    def search_person_by_name(
+        self, person_name: str, company_linkedin_url: str, max_candidates: int = 5
+    ) -> tuple[list[dict], object]:
         """
-        Search for a specific person by name within a company's LinkedIn employees.
-        Uses the searchQuery parameter for targeted lookup — returns at most 1 result.
-        Returns (profile_dict | None, run_metadata).
+        Search for a specific person by name within a company's LinkedIn people index.
+
+        Uses searchQuery scoped to company_linkedin_url so LinkedIn's own search
+        does the filtering — finds advisors and alumni, not just current employees.
+        Returns up to max_candidates profiles so the caller can pick the best name
+        match rather than blindly accepting the first result.
+
+        Returns (profiles, run).
         """
         run_input = {
             "companies": [company_linkedin_url],
-            "maxItems": 1,
+            "maxItems": max_candidates,
             "searchQuery": person_name,
         }
         run = self.client.actor(self.ACTOR_ID).call(run_input=run_input)
         self._last_run = run
         items = list(self.client.dataset(_run_dataset_id(run)).iterate_items())
-        profile = self._parse_employee(items[0]) if items else None
-        return profile, run
+        profiles = [p for item in items if (p := self._parse_employee(item))]
+        return profiles, run
 
     @staticmethod
     def _parse_employee(item: dict) -> Optional[dict]:
