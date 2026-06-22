@@ -32,6 +32,12 @@ class Settings(BaseSettings):
     PROXY_URLS: Optional[str] = None
     SCRAPE_MAX_PROFILES: int = 10000
 
+    # LinkedIn resolution: max employees to bulk-fetch for the Stage 0 roster match.
+    # Bounds cost on very large companies; the roster only adds coverage (unmatched
+    # people always fall through to Google + per-person search), so capping it never
+    # lowers recall — it just trades a big single fetch for cheaper targeted lookups.
+    LINKEDIN_ROSTER_MAX: int = 3000
+
     class Config:
         env_file = str(Path(__file__).parent.parent.parent / ".env")
         extra = "ignore"

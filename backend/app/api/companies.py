@@ -171,6 +171,7 @@ def retry_company(company_id: UUID, body: RetryRequest, db: Session = Depends(ge
     - rescrape: Delete people, re-scrape from scratch (uses team_url if already discovered)
     - reanalyze: Keep people, re-run LLM expertise analysis
     - reenrich: Keep people, re-run LinkedIn enrichment + analysis
+    - reresolve: Re-run LinkedIn URL resolution for people without a URL
     """
     company = db.query(Company).filter(Company.id == company_id).first()
     if not company:
@@ -323,6 +324,29 @@ def retry_company(company_id: UUID, body: RetryRequest, db: Session = Depends(ge
             analyze_expertise_batch.delay(str(company_id), person_ids)
 
         return RetryResponse(status="ok", message=f"Re-enriching {len(person_ids)} people ({len(has_url_ids)} with URLs)")
+
+    elif body.mode == "reresolve":
+        # Re-run LinkedIn URL resolution for people who don't have a URL yet.
+        # Useful after manually clearing wrong URLs or when resolution previously failed.
+        missing_url = db.query(Person).filter(
+            Person.company_id == company_id,
+            Person.linkedin_url.is_(None),
+        ).all()
+        if not missing_url:
+            raise HTTPException(status_code=400, detail="All people already have LinkedIn URLs")
+
+        person_ids = [str(p.id) for p in missing_url]
+        company.status = "resolving"
+        company.error_message = None
+        company.updated_at = datetime.now(timezone.utc)
+        db.commit()
+
+        from app.tasks.resolve_linkedin_task import resolve_linkedin_urls
+        resolve_linkedin_urls.delay(str(company_id), person_ids)
+        return RetryResponse(
+            status="ok",
+            message=f"Re-resolving LinkedIn URLs for {len(person_ids)} people without a URL",
+        )
 
     else:
         raise HTTPException(status_code=400, detail=f"Unknown mode: {body.mode}")
